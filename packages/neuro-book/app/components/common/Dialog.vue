@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { IDE_THEME_HOST_CLASS } from "nbook/app/utils/theme/theme-tokens";
-import {WORKBENCH_DIALOG_SIZE} from "nbook/app/utils/dialog-layout";
-import {computed, getCurrentInstance, onBeforeUnmount, onMounted, ref, watch} from "vue";
+import {NB_POPOVER_Z_INDEX, NB_Z_INDEX} from "@notnotype/nb-ui/theme";
+import { THEME_HOST_SELECTOR } from "nbook/app/utils/theme/host";
+import {computed, getCurrentInstance, onBeforeUnmount, onMounted, provide, ref, watch} from "vue";
 /**
  * 通用对话框组件。
  *
@@ -39,8 +39,23 @@ const DIALOG_SIZE_PRESETS: Record<DialogSize, DialogSizePreset> = {
         height: "auto",
         maxHeight: "calc(100vh - 32px)",
     },
-    xl: WORKBENCH_DIALOG_SIZE,
-    full: WORKBENCH_DIALOG_SIZE,
+    /*
+     * xl / full 是「大工作台」两档。几何必须同时带像素上限与视口内缩：
+     * - 上限防止超宽屏把对话框拉成整片墙；
+     * - 内缩留出页头 / 窗口圆角，尤其桌面壳顶部有 36px 标题栏，纵向内缩不得小于它。
+     * 数值按真实工作台的最小可用面积定：full 要撑开三栏（侧栏 + 主区 + 检查器），
+     * xl 要撑开双栏 + 详情。
+     */
+    xl: {
+        width: "min(1200px, calc(100vw - 48px))",
+        height: "min(840px, calc(100dvh - 80px))",
+        maxHeight: "calc(100dvh - 80px)",
+    },
+    full: {
+        width: "min(1600px, calc(100vw - 48px))",
+        height: "min(1080px, calc(100dvh - 80px))",
+        maxHeight: "calc(100dvh - 80px)",
+    },
 };
 
 const props = withDefaults(defineProps<{
@@ -85,7 +100,7 @@ const props = withDefaults(defineProps<{
     showHeader: true,
     closeOnOverlay: true,
     closeOnEsc: true,
-    teleportTarget: `.${IDE_THEME_HOST_CLASS}`,
+    teleportTarget: THEME_HOST_SELECTOR,
     overlayType: "opaque",
     showCancel: false,
     showFooter: true,
@@ -223,6 +238,15 @@ const resolvedMaxHeight = computed(() => props.maxHeight ?? resolvedSizePreset.v
 onMounted(() => {
     isMounted.value = true;
 });
+
+/*
+ * 对话框里的 nb-ui 浮层（下拉、气泡）要压在遮罩之上。
+ *
+ * nb-ui 的浮层默认 teleport 到 body 并取注入的层级，缺省只有 60；本对话框的遮罩是 z-9000，
+ * 于是浮层会被自己的遮罩盖住——看得见、点不到。旧 app FormSelect 没这个问题，因为它的
+ * 面板内联在对话框子树里（z-9200）。这里把注入值抬到遮罩之上，所有 nb-ui 浮层一起生效。
+ */
+provide(NB_POPOVER_Z_INDEX, NB_Z_INDEX.dialog + 1);
 </script>
 
 <template>
@@ -241,7 +265,7 @@ onMounted(() => {
                     :style="{ width: resolvedWidth, height: resolvedHeight, maxHeight: resolvedMaxHeight }"
                 >
                     <!-- header 区域 -->
-                    <div v-if="props.showHeader" class="flex shrink-0 items-center justify-between px-5 py-2 border-b border-[var(--border-color)]" :class="props.headerClass">
+                    <div v-if="props.showHeader" class="flex items-center justify-between px-5 py-2 border-b border-[var(--border-color)]" :class="props.headerClass">
                         <slot name="header">
                             <div class="flex min-w-0 flex-1 items-center gap-3">
                                 <span class="min-w-0 flex-1 text-base font-semibold text-[var(--text-main)] leading-snug tracking-wide">{{ props.title }}</span>
@@ -254,12 +278,12 @@ onMounted(() => {
                     </div>
 
                     <!-- body 区域 -->
-                    <div class="min-h-0 min-w-0 flex-1 flex flex-col gap-4 overflow-y-auto px-5 py-4 text-[14px] leading-relaxed text-[var(--text-secondary)]" :class="props.bodyClass">
+                    <div class="flex-1 flex flex-col gap-4 overflow-y-auto px-5 py-4 text-[14px] leading-relaxed text-[var(--text-secondary)]" :class="props.bodyClass">
                         <slot />
                     </div>
 
                     <!-- footer 区域 -->
-                    <div v-if="props.showFooter" class="flex shrink-0 items-center justify-end gap-2.5 px-5 py-2 border-t border-[var(--border-color)] bg-transparent">
+                    <div v-if="props.showFooter" class="flex items-center justify-end gap-2.5 px-5 py-2 border-t border-[var(--border-color)] bg-transparent">
                         <slot name="footer" :confirm="handleConfirm" :cancel="() => requestClose('cancel')">
                             <button v-if="props.showCancel" class="inline-flex items-center justify-center h-8 px-4 rounded-md text-[13px] font-medium cursor-pointer border border-[var(--border-color)] bg-[var(--bg-input)] text-[var(--text-main)] transition-colors duration-200 hover:bg-[var(--bg-hover)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-50" :disabled="props.busy" @click="requestClose('cancel')">{{ t("common.cancel") }}</button>
                             <button class="inline-flex items-center justify-center h-8 px-4 rounded-md text-[13px] font-medium cursor-pointer border border-transparent bg-[var(--accent-main)] text-[var(--text-inverse)] transition-all duration-200 hover:opacity-90 hover:shadow-md active:scale-95 disabled:cursor-not-allowed disabled:opacity-50" :disabled="props.busy" @click="handleConfirm">{{ t("common.confirm") }}</button>

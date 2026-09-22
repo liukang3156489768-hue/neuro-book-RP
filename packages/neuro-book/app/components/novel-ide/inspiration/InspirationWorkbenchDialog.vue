@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import DialogWindow from "nbook/app/components/common/DialogWindow.vue";
+import {DialogWindow} from "@notnotype/nb-ui/components";
 import {INSPIRATION_CATEGORIES, INSPIRATION_CATEGORY_LABELS, type InspirationCategory} from "nbook/shared/dto/inspiration.dto";
 import {useInspirationWorkbench} from "nbook/app/composables/useInspirationWorkbench";
 
@@ -21,7 +21,7 @@ function normalizeTemperature(): void { const value = Number(temperature.value);
 </script>
 
 <template>
-    <DialogWindow size="workbench" :model-value="props.modelValue" title="Inspiration 设计工作台" :busy="loading || saving" body-class="overflow-hidden p-0" @update:model-value="emit('update:modelValue', $event)">
+    <DialogWindow size="lg" :model-value="props.modelValue" title="Inspiration 设计工作台" :busy="loading || saving" body-class="overflow-hidden p-0" @update:model-value="emit('update:modelValue', $event)">
         <div class="workbench">
             <aside class="sessions" aria-label="聊天记录">
                 <div class="sidebar-header"><strong>聊天记录</strong><button type="button" class="icon-button" title="新建聊天" @click="workbench.createConversation()"><span class="i-lucide-plus h-4 w-4"></span></button></div>
