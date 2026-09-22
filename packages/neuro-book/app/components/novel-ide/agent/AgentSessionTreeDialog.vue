@@ -484,11 +484,9 @@ function handleKeyDown(e: KeyboardEvent): void {
 </script>
 
 <template>
-    <Dialog
+    <Dialog size="full"
         :model-value="props.modelValue"
         :title="t('agent.sessionTree.title')"
-        width="min(1560px, calc(100vw - 16px))"
-        height="min(920px, calc(100vh - 16px))"
         body-class="!p-0 !gap-0 !overflow-hidden !bg-[var(--bg-main)]"
         header-class="!px-4 !py-3 !bg-[var(--bg-main)]"
         :show-footer="false"

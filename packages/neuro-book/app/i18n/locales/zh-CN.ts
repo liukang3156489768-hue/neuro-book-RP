@@ -902,6 +902,10 @@ const zhCN = {
         },
     },
     ide: {
+        inspiration: {
+            title: "设计工作台",
+            request: "告诉设计助手你想完善什么",
+        },
         activityBar: {
             more: "更多",
             moreActions: "更多工作台入口",

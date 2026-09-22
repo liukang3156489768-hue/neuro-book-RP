@@ -93,6 +93,7 @@ Code-first 只调整已授权 Task 内的修改顺序，不绕过人类授权、
 | Agent Runtime 与 Profile | [Reference: Agent](../../packages/neuro-book/assets/reference/agent/README.md) | Session、Profile、Workflow、Skill、Job、Project Workspace 与 Agent 协作协议 |
 | Agent 资产运行期安装与 Catalog 根 | [`agent/asset-install-runtime.md`](agent/asset-install-runtime.md) | State Root Install Root、Runtime Reference Root、Install → Project 覆盖和显式 artifact context 已由代码与合同测试支持 |
 | Agent Session Abort | [`agent/session-abort.md`](agent/session-abort.md) | HTTP abort、合作/forced 收口、唯一 durable lifecycle、写入恢复与 409/503 失败合同已由实现和行为测试支持 |
+| Inspiration 设计模块首版 | [`ui/inspiration-workbench.md`](ui/inspiration-workbench.md) | 左侧入口、非模态工作台、八类原创设计审阅保存、来源安全切分编号和 Agent 取消边界已由实现与聚焦测试支持 |
 | 内容与 Project Workspace | [Reference: Content](../../packages/neuro-book/assets/reference/content/README.md) | 内容节点、正文、素材、检索、引用与 Workspace 术语 |
 | World Engine | [Reference: World Engine](../../packages/neuro-book/assets/reference/world-engine/README.md) | 时间线、slice、subject、schema、calendar 与写作协作 |
 | Plot | [Reference: Plot](../../packages/neuro-book/assets/reference/plot/README.md) | Story、Thread、Scene、Writer Brief、Agent 与前端合同 |
@@ -112,6 +113,7 @@ Code-first 只调整已授权 Task 内的修改顺序，不绕过人类授权、
 | 功能域 | 计划规范 | 说明 |
 |---|---|---|
 | Component Lab | [`ui/component-lab.md`](ui/component-lab.md) | Source Dev-only 确定性 fixture、响应式检视和 Product 排除合同；当前尚未实现 |
+| 工作台外壳 | [`ui/workbench-shell.md`](ui/workbench-shell.md) | 已批准晴窗布局、抽屉与设置弹窗；保留真实 UI/API 与会话生命周期，实施中 |
 | Agent Session Store 租约 | [`agent/session-store-lease.md`](agent/session-store-lease.md) | proper-lockfile 租约互斥、mtime 心跳、失效与 Windows 文件系统兼容目标；修复验证闭合前保持 `planned` |
 
 ## 冻结过渡规范

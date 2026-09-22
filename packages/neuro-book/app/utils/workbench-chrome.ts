@@ -15,6 +15,7 @@ export type WorkbenchActivityItemId =
     | "characters"
     | "plot"
     | "world"
+    | "inspiration"
     | "trace"
     | "history"
     | "agent-panel"
@@ -70,6 +71,7 @@ export function createWorkbenchActivityItems(
             {id: "characters", disabled: novelOnlyDisabled},
             {id: "plot", disabled: novelOnlyDisabled},
             {id: "world", disabled: novelOnlyDisabled},
+            {id: "inspiration", disabled: novelOnlyDisabled},
         ],
         secondary: [
             {id: "trace", disabled: projectDisabled},

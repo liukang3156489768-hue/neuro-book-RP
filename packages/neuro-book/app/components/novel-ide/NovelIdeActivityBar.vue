@@ -17,6 +17,7 @@ const props = defineProps<{
     surfaceActive: boolean;
     userAssetsMode: boolean;
     agentPanelOpen: boolean;
+    inspirationOpen: boolean;
     currentUser: AuthUserDto | null;
 }>();
 
@@ -24,6 +25,7 @@ const emit = defineEmits<{
     (event: "open-home"): void;
     (event: "open-tab", value: NovelIdeTab): void;
     (event: "open-world-engine"): void;
+    (event: "open-inspiration"): void;
     (event: "open-trace-viewer"): void;
     (event: "open-history-inbox"): void;
     (event: "toggle-agent-panel"): void;
@@ -69,6 +71,7 @@ const iconClasses: Record<WorkbenchActivityItemId, string> = {
     characters: "i-lucide-users-round",
     plot: "i-lucide-git-branch",
     world: "i-lucide-globe-2",
+    inspiration: "i-lucide-lightbulb",
     trace: "i-lucide-activity",
     history: "i-lucide-inbox",
     "agent-panel": "i-lucide-bot",
@@ -82,6 +85,7 @@ const labels = computed<Record<WorkbenchActivityItemId, string>>(() => ({
     characters: t("ide.toolPanel.characters"),
     plot: t("ide.header.plotWorkbench"),
     world: t("ide.header.worldEngine"),
+    inspiration: t("ide.inspiration.title", "设计工作台"),
     trace: t("ide.header.traceViewerTitle"),
     history: t("ide.header.historyInboxTitle"),
     "agent-panel": props.agentPanelOpen ? t("ide.header.closeAgentPanel") : t("ide.header.openAgentPanel"),
@@ -96,6 +100,7 @@ function active(item: WorkbenchActivityItem): boolean {
         case "characters":
         case "plot":
             return props.activeTab === item.id;
+        case "inspiration": return props.inspirationOpen;
         case "agent-panel": return props.agentPanelOpen;
         default: return false;
     }
@@ -113,6 +118,7 @@ function invoke(item: WorkbenchActivityItem): void {
         case "characters":
         case "plot": emit("open-tab", item.id); return;
         case "world": emit("open-world-engine"); return;
+        case "inspiration": emit("open-inspiration"); return;
         case "trace": emit("open-trace-viewer"); return;
         case "history": emit("open-history-inbox"); return;
         case "agent-panel": emit("toggle-agent-panel"); return;
@@ -263,6 +269,7 @@ onBeforeUnmount(() => {
                         :class="active(item) ? 'bg-[var(--bg-hover)] text-[var(--accent-text)]' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-main)]'"
                         :disabled="item.disabled"
                         :aria-pressed="active(item)"
+                        :aria-label="labels[item.id]"
                         :data-activity-id="item.id"
                         @click="invoke(item)"
                     >
@@ -286,6 +293,7 @@ onBeforeUnmount(() => {
                     :class="active(item) ? 'bg-[var(--bg-hover)] text-[var(--accent-text)]' : ''"
                     :disabled="item.disabled"
                     :aria-pressed="active(item)"
+                    :aria-label="labels[item.id]"
                     :data-activity-id="item.id"
                     @click="invoke(item)"
                 >
@@ -300,6 +308,7 @@ onBeforeUnmount(() => {
                         type="button"
                         class="workbench-activity-bar__item flex h-10 w-10 items-center justify-center rounded-md border border-transparent text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-main)]"
                         aria-haspopup="menu"
+                        :aria-label="t('ide.activityBar.more')"
                         :aria-expanded="moreOpen"
                         aria-controls="workbench-activity-more-menu"
                         @click="toggleMore"
@@ -346,6 +355,7 @@ onBeforeUnmount(() => {
                     :class="props.agentPanelOpen ? 'bg-[var(--bg-hover)] text-[var(--accent-text)]' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-main)]'"
                     :disabled="activityItems.agentPanel.disabled"
                     :aria-pressed="props.agentPanelOpen"
+                    :aria-label="labels['agent-panel']"
                     data-activity-id="agent-panel"
                     @click="invoke(activityItems.agentPanel)"
                 >
@@ -370,6 +380,7 @@ onBeforeUnmount(() => {
                     type="button"
                     class="workbench-activity-bar__item flex h-10 w-10 items-center justify-center rounded-md text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-main)]"
                     data-activity-id="settings"
+                    :aria-label="labels.settings"
                     @click="emit('open-settings')"
                 >
                     <span :class="iconClasses.settings" class="h-[18px] w-[18px]"></span>
@@ -380,8 +391,44 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.workbench-activity-bar {
+    z-index: 50;
+    width: 56px;
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    background: var(--bg-panel);
+    box-shadow: 0 4px 20px color-mix(in srgb, var(--shadow-color) 4%, transparent);
+}
+
+.workbench-activity-bar__item {
+    border-radius: 11px;
+}
+
+.workbench-activity-bar__item[aria-pressed="true"] {
+    background: var(--accent-bg);
+    color: var(--accent-text);
+}
+
+.workbench-activity-bar__item:focus-visible {
+    outline: 2px solid var(--accent-main);
+    outline-offset: 1px;
+}
+
 .workbench-activity-bar__item:disabled {
     cursor: not-allowed;
     opacity: 0.34;
+}
+
+@media (max-width: 799px) {
+    .workbench-activity-bar {
+        width: 46px;
+        border-radius: 12px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .workbench-activity-bar__item {
+        transition: none;
+    }
 }
 </style>

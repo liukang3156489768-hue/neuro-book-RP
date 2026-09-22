@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { IDE_THEME_HOST_CLASS } from "nbook/app/utils/theme/theme-tokens";
+import {WORKBENCH_DIALOG_SIZE} from "nbook/app/utils/dialog-layout";
 import {computed, getCurrentInstance, onBeforeUnmount, onMounted, ref, watch} from "vue";
 /**
  * 通用对话框组件。
@@ -38,16 +39,8 @@ const DIALOG_SIZE_PRESETS: Record<DialogSize, DialogSizePreset> = {
         height: "auto",
         maxHeight: "calc(100vh - 32px)",
     },
-    xl: {
-        width: "min(960px, calc(100vw - 48px))",
-        height: "min(600px, calc(100dvh - 80px))",
-        maxHeight: "calc(100dvh - 80px)",
-    },
-    full: {
-        width: "min(1120px, calc(100vw - 48px))",
-        height: "min(640px, calc(100dvh - 80px))",
-        maxHeight: "calc(100dvh - 80px)",
-    },
+    xl: WORKBENCH_DIALOG_SIZE,
+    full: WORKBENCH_DIALOG_SIZE,
 };
 
 const props = withDefaults(defineProps<{
@@ -248,7 +241,7 @@ onMounted(() => {
                     :style="{ width: resolvedWidth, height: resolvedHeight, maxHeight: resolvedMaxHeight }"
                 >
                     <!-- header 区域 -->
-                    <div v-if="props.showHeader" class="flex items-center justify-between px-5 py-2 border-b border-[var(--border-color)]" :class="props.headerClass">
+                    <div v-if="props.showHeader" class="flex shrink-0 items-center justify-between px-5 py-2 border-b border-[var(--border-color)]" :class="props.headerClass">
                         <slot name="header">
                             <div class="flex min-w-0 flex-1 items-center gap-3">
                                 <span class="min-w-0 flex-1 text-base font-semibold text-[var(--text-main)] leading-snug tracking-wide">{{ props.title }}</span>
@@ -261,12 +254,12 @@ onMounted(() => {
                     </div>
 
                     <!-- body 区域 -->
-                    <div class="flex-1 flex flex-col gap-4 overflow-y-auto px-5 py-4 text-[14px] leading-relaxed text-[var(--text-secondary)]" :class="props.bodyClass">
+                    <div class="min-h-0 min-w-0 flex-1 flex flex-col gap-4 overflow-y-auto px-5 py-4 text-[14px] leading-relaxed text-[var(--text-secondary)]" :class="props.bodyClass">
                         <slot />
                     </div>
 
                     <!-- footer 区域 -->
-                    <div v-if="props.showFooter" class="flex items-center justify-end gap-2.5 px-5 py-2 border-t border-[var(--border-color)] bg-transparent">
+                    <div v-if="props.showFooter" class="flex shrink-0 items-center justify-end gap-2.5 px-5 py-2 border-t border-[var(--border-color)] bg-transparent">
                         <slot name="footer" :confirm="handleConfirm" :cancel="() => requestClose('cancel')">
                             <button v-if="props.showCancel" class="inline-flex items-center justify-center h-8 px-4 rounded-md text-[13px] font-medium cursor-pointer border border-[var(--border-color)] bg-[var(--bg-input)] text-[var(--text-main)] transition-colors duration-200 hover:bg-[var(--bg-hover)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-50" :disabled="props.busy" @click="requestClose('cancel')">{{ t("common.cancel") }}</button>
                             <button class="inline-flex items-center justify-center h-8 px-4 rounded-md text-[13px] font-medium cursor-pointer border border-transparent bg-[var(--accent-main)] text-[var(--text-inverse)] transition-all duration-200 hover:opacity-90 hover:shadow-md active:scale-95 disabled:cursor-not-allowed disabled:opacity-50" :disabled="props.busy" @click="handleConfirm">{{ t("common.confirm") }}</button>

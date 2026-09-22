@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {IDE_THEME_HOST_CLASS} from "nbook/app/utils/theme/theme-tokens";
+import {WORKBENCH_DIALOG_SIZE, resolveWorkbenchDialogWidth, resolveWorkbenchDialogHeight} from "nbook/app/utils/dialog-layout";
 
 /**
  * 通用浮动窗口组件（非模态）。
@@ -12,6 +13,8 @@ import {IDE_THEME_HOST_CLASS} from "nbook/app/utils/theme/theme-tokens";
 const props = withDefaults(defineProps<{
     /** 控制窗口显隐 */
     modelValue: boolean;
+    /** 页面型窗口与设置共用比例，content 保持按内容布局。 */
+    size?: "content" | "workbench";
     /** 标题栏文字 */
     title?: string;
     /** 窗口宽度（px），拖动边界按此值收敛 */
@@ -32,9 +35,7 @@ const props = withDefaults(defineProps<{
     teleportTarget?: string;
 }>(), {
     title: "",
-    width: 560,
-    height: "auto",
-    maxHeight: "calc(100dvh - 80px)",
+    size: "content",
     closable: true,
     closeOnEsc: true,
     busy: false,
@@ -54,6 +55,9 @@ const dragHandleRef = ref<HTMLElement | null>(null);
 const positioned = ref(false);
 
 const {width: viewportWidth, height: viewportHeight} = useWindowSize();
+const resolvedWidth = computed(() => props.width ?? (props.size === "workbench" ? resolveWorkbenchDialogWidth(viewportWidth.value) : 560));
+const resolvedHeight = computed(() => props.height ?? (props.size === "workbench" ? WORKBENCH_DIALOG_SIZE.height : "auto"));
+const resolvedMaxHeight = computed(() => props.maxHeight ?? (props.size === "workbench" ? WORKBENCH_DIALOG_SIZE.maxHeight : "calc(100dvh - 80px)"));
 const {x, y} = useDraggable(windowRef, {
     handle: dragHandleRef,
     preventDefault: true,
@@ -62,11 +66,17 @@ const {x, y} = useDraggable(windowRef, {
 
 /** 拖动边界收敛：窗口至少保留一角在视口内，标题栏始终可再次抓取 */
 const clampedX = computed(() => {
-    const minX = 16 - props.width + 72;
+    if (props.size === "workbench") {
+        return Math.min(Math.max(x.value, 12), Math.max(12, viewportWidth.value - resolvedWidth.value - 12));
+    }
+    const minX = 16 - resolvedWidth.value + 72;
     const maxX = Math.max(viewportWidth.value - 72, minX);
     return Math.min(Math.max(x.value, minX), maxX);
 });
 const clampedY = computed(() => {
+    if (props.size === "workbench" && !props.height) {
+        return Math.min(Math.max(y.value, 12), Math.max(12, viewportHeight.value - resolveWorkbenchDialogHeight(viewportHeight.value) - 12));
+    }
     const maxY = Math.max(viewportHeight.value - 48, 8);
     return Math.min(Math.max(y.value, 8), maxY);
 });
@@ -74,9 +84,9 @@ const clampedY = computed(() => {
 const windowStyle = computed(() => ({
     left: `${clampedX.value}px`,
     top: `${clampedY.value}px`,
-    width: `${props.width}px`,
-    height: props.height,
-    maxHeight: props.maxHeight,
+    width: `${resolvedWidth.value}px`,
+    height: resolvedHeight.value,
+    maxHeight: resolvedMaxHeight.value,
 }));
 
 /**
@@ -113,10 +123,10 @@ watch(() => props.modelValue, (visible) => {
         return;
     }
     if (visible) {
-        // 首次打开时停靠视口右上，之后保留用户拖过的位置
+        // 页面型窗口首次居中；再次打开保留拖动位置，避免打断边编辑边预览。
         if (!positioned.value) {
-            x.value = Math.max(viewportWidth.value - props.width - 28, 16);
-            y.value = 64;
+            x.value = props.size === "workbench" ? (viewportWidth.value - resolvedWidth.value) / 2 : Math.max(viewportWidth.value - resolvedWidth.value - 28, 16);
+            y.value = props.size === "workbench" ? (viewportHeight.value - resolveWorkbenchDialogHeight(viewportHeight.value)) / 2 : 64;
             positioned.value = true;
         }
         document.addEventListener("keydown", handleKeydown);

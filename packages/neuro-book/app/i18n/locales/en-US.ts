@@ -904,6 +904,10 @@ const enUS = {
         },
     },
     ide: {
+        inspiration: {
+            title: "Design Workbench",
+            request: "Tell the design assistant what you want to develop",
+        },
         activityBar: {
             more: "More",
             moreActions: "More workbench actions",

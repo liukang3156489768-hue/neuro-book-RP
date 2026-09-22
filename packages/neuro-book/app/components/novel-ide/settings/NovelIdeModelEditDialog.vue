@@ -178,12 +178,9 @@ function updateOpen(value: boolean): void {
 
 <template>
     <!-- 模型编辑 Dialog：摘要、页签和内容区各自承担单一职责。 -->
-    <Dialog
+    <Dialog size="full"
         :model-value="props.modelValue"
         :title="t('settings.panels.modelEdit.title')"
-        width="min(980px, calc(100vw - 24px))"
-        height="min(760px, calc(100vh - 24px))"
-        max-height="calc(100vh - 24px)"
         overlay-type="opaque"
         :show-footer="props.confirmMode ?? false"
         :show-cancel="props.confirmMode ?? false"

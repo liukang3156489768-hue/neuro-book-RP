@@ -88,11 +88,9 @@ function onSelectRequest(value: string): void {
 </script>
 
 <template>
-    <DialogWindow
+    <DialogWindow size="workbench"
         :model-value="props.modelValue"
         :title="t('agent.contextInspector.title')"
-        :width="900"
-        max-height="calc(100vh - 96px)"
         body-class="overflow-y-auto px-4 py-3"
         @update:model-value="emit('update:modelValue', $event)"
     >

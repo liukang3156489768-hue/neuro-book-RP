@@ -93,11 +93,9 @@ function handleAction(action: DiffWorkbenchAction): void {
 </script>
 
 <template>
-    <Dialog
+    <Dialog size="full"
         :model-value="modelValue"
         :title="title"
-        width="92vw"
-        height="82vh"
         :closable="false"
         :close-on-overlay="false"
         :close-on-esc="false"

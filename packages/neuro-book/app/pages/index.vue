@@ -11,6 +11,7 @@ import NovelIdeProfileDialog from "nbook/app/components/novel-ide/NovelIdeProfil
 import NovelIdeSettingsDialog from "nbook/app/components/novel-ide/NovelIdeSettingsDialog.vue";
 import NovelIdeToolPanel from "nbook/app/components/novel-ide/NovelIdeToolPanel.vue";
 import WorldEngineWorkbenchDialog from "nbook/app/components/novel-ide/world-engine/WorldEngineWorkbenchDialog.vue";
+import InspirationWorkbenchDialog from "nbook/app/components/novel-ide/inspiration/InspirationWorkbenchDialog.vue";
 import NovelPromptBar from "nbook/app/components/novel-ide/NovelPromptBar.vue";
 import type {AgentSessionModelDraft} from "nbook/app/components/novel-ide/agent/agent-session-model-controls";
 import WorkspaceFilePanel from "nbook/app/components/novel-ide/workspace/WorkspaceFilePanel.vue";
@@ -79,6 +80,7 @@ const historyInboxRefreshKey = ref(0);
 const worldEngineWorkbenchOpen = ref(false);
 const worldEngineWorkbenchHasUnsavedDrafts = ref(false);
 const worldEngineWorkbenchSaving = ref(false);
+const inspirationWorkbenchOpen = ref(false);
 const profileWorkbenchOpen = ref(false);
 const frontmatterProfileKind = ref<FrontmatterProfileKind | null>(null);
 const agentStudioFileTreeOpen = ref(false);
@@ -374,6 +376,9 @@ const agentModeReservedWidth = computed(() => 56 + (agentSessionPanelOpen.value 
 const {width: viewportWidth} = useWindowSize();
 const agentPanelMaxWidth = computed(() => Math.max(360, Math.floor((viewportWidth.value || 1280) * 0.45)));
 const agentPanelOverlay = computed(() => viewportWidth.value > 0 && viewportWidth.value < 800);
+watch([agentPanelOverlay, displayAgentPanelOpen], ([overlay, open]) => {
+    if (overlay && open) activeLeftTab.value = null;
+});
 const agentStudioMaxWidth = computed(() => {
     if (!import.meta.client) {
         return 620;
@@ -388,6 +393,9 @@ const agentStudioPanelVisible = computed({
     },
 });
 const agentStudioPanelOpen = computed(() => workspaceBootstrapped.value && agentStudioPanelVisible.value);
+watch([agentPanelOverlay, isAgentMode, agentStudioPanelOpen], ([overlay, agentMode, studioOpen]) => {
+    if (overlay && agentMode && studioOpen) agentSessionPanelOpen.value = false;
+}, {immediate: true});
 const {isResizing: resizingAgentPanel, panelStyle: agentPanelStyle} = useResizablePanel(agentResizeHandleRef, {
     size: computed(() => agentPanelWidth.value),
     minSize: 320,
@@ -438,11 +446,11 @@ const displayActiveLeftTab = computed<NovelIdeTab | null>(() => {
     if (!workspaceBootstrapped.value) {
         return "files";
     }
-    if (isUserAssetsWorkspace.value) {
-        return "files";
-    }
     if (activeLeftTab.value === null) {
         return null;
+    }
+    if (isUserAssetsWorkspace.value) {
+        return "files";
     }
     return isNovelIdeTab(activeLeftTab.value) ? activeLeftTab.value : "files";
 });
@@ -1612,7 +1620,14 @@ const closeAgentSurface = (): void => {
         layoutMode.value = "ide";
     }
     agentPanelOpen.value = false;
+    nextTick(() => themeHostRef.value?.querySelector<HTMLButtonElement>("[data-workbench-agent-toggle]")?.focus());
 };
+
+function closeToolPanel(): void {
+    const tab = displayActiveLeftTab.value;
+    activeLeftTab.value = null;
+    nextTick(() => themeHostRef.value?.querySelector<HTMLButtonElement>(`[data-activity-id="${tab ?? "files"}"]`)?.focus());
+}
 
 /**
  * 标题栏与 B/S Activity Bar 共用的 Agent 侧栏开关。
@@ -1636,6 +1651,12 @@ const toggleAgentPanel = async (): Promise<void> => {
  */
 const toggleAgentModeStudio = (): void => {
     agentStudioPanelVisible.value = !agentStudioPanelVisible.value;
+    if (agentPanelOverlay.value && agentStudioPanelVisible.value) agentSessionPanelOpen.value = false;
+};
+
+const toggleAgentModeSessions = (): void => {
+    agentSessionPanelOpen.value = !agentSessionPanelOpen.value;
+    if (agentPanelOverlay.value && agentSessionPanelOpen.value) agentStudioPanelVisible.value = false;
 };
 
 /**
@@ -1796,6 +1817,7 @@ const openAdmin = async (): Promise<void> => {
  * 切换左侧标签；若重复点击则收起。
  */
 const toggleLeftTab = (tab: NovelIdeTab): void => {
+    if (agentPanelOverlay.value) agentPanelOpen.value = false;
     activeLeftTab.value = activeLeftTab.value === tab ? null : tab;
 };
 
@@ -2513,10 +2535,12 @@ onBeforeUnmount(() => {
             :surface-active="projectSurfaceActive"
             :user-assets-mode="isUserAssetsWorkspace"
             :agent-panel-open="displayAgentPanelOpen"
+            :inspiration-open="inspirationWorkbenchOpen"
             :current-user="currentUser"
             @open-home="void openProjectPicker()"
             @open-tab="handleSidebarToggle"
             @open-world-engine="openWorldEngineWorkbench"
+            @open-inspiration="inspirationWorkbenchOpen = true"
             @open-trace-viewer="traceViewerOpen = true"
             @open-history-inbox="historyInboxOpen = true"
             @toggle-agent-panel="void toggleAgentPanel()"
@@ -2526,13 +2550,37 @@ onBeforeUnmount(() => {
             @logout="void logout()"
         />
 
-        <div class="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div class="workbench-body relative flex min-w-0 flex-1 flex-col overflow-hidden">
+        <header v-if="projectSurfaceActive" class="workbench-heading">
+            <div class="min-w-0 flex-1">
+                <h1 class="workbench-heading__title truncate">{{ displayNovelTitle }}</h1>
+                <p v-if="displaySelectedFileNode" class="truncate text-xs text-[var(--text-muted)]">{{ displaySelectedFileNode.title }}</p>
+            </div>
+            <button v-if="isAgentMode" type="button" class="workbench-heading__action" :aria-expanded="agentSessionPanelOpen" :aria-label="t('agent.session.sidebarTitle')" @click="toggleAgentModeSessions()">
+                <span class="i-lucide-panel-left h-4 w-4"></span>
+            </button>
+            <button v-if="isAgentMode" type="button" class="workbench-heading__action" :aria-expanded="agentStudioPanelOpen" aria-label="Studio" @click="toggleAgentModeStudio()">
+                <span class="i-lucide-panel-right h-4 w-4"></span>
+            </button>
+            <button type="button" class="workbench-heading__action ide-agent-mode-switch" :aria-pressed="isAgentMode" :title="isAgentMode ? t('markdownStudio.welcome.ideMode') : t('markdownStudio.welcome.agentMode')" @click="void toggleAgentLayoutMode()">
+                <span :class="isAgentMode ? 'i-lucide-pen-line' : 'i-lucide-panel-top'" class="h-4 w-4"></span>
+                <span class="workbench-heading__label">{{ isAgentMode ? t('markdownStudio.welcome.ideMode') : t('markdownStudio.welcome.agentMode') }}</span>
+            </button>
+            <button type="button" data-workbench-agent-toggle class="workbench-heading__action" :aria-expanded="displayAgentPanelOpen || isAgentMode" :aria-label="displayAgentPanelOpen || isAgentMode ? t('ide.header.closeAgentPanel') : t('ide.header.openAgentPanel')" @click="isAgentMode ? closeAgentSurface() : void toggleAgentPanel()">
+                <span class="i-lucide-sparkles h-4 w-4"></span>
+                <span class="workbench-heading__label">Agent</span>
+            </button>
+        </header>
         <!-- 未选择 Project：项目选择界面接管整页 -->
         <ProjectPickerScreen v-if="projectPickerActive" @open="void openProjectFromPicker($event)" @open-user-assets="openUserAssets" />
         <WorldEngineWorkbenchDialog v-if="projectSurfaceActive && !isUserAssetsWorkspace" v-model="worldEngineWorkbenchOpen" :project-root="currentProjectRoot" :project-title="displayNovelTitle" @has-unsaved-drafts-change="worldEngineWorkbenchHasUnsavedDrafts = $event" @saving-change="worldEngineWorkbenchSaving = $event" @open-workspace-path="void openWelcomeWorkspacePath($event)" />
+        <InspirationWorkbenchDialog v-if="projectSurfaceActive && !isUserAssetsWorkspace" v-model="inspirationWorkbenchOpen" :project-root="currentProjectRoot" />
 
-        <div v-if="projectSurfaceActive" class="flex min-h-0 flex-1 overflow-hidden">
+        <div v-if="projectSurfaceActive" class="workbench-panels relative flex min-h-0 flex-1 overflow-hidden">
+            <button v-if="agentPanelOverlay && !isAgentMode && (ideToolPanelOpen || displayAgentPanelOpen)" type="button" tabindex="-1" class="workbench-drawer-backdrop" :aria-label="t('ide.toolPanel.collapsePanel')" @click="displayAgentPanelOpen ? closeAgentSurface() : closeToolPanel()"></button>
             <AgentModeSessionSidebar
+                :inert="!isAgentMode || !agentSessionPanelOpen"
+                :aria-hidden="!isAgentMode || !agentSessionPanelOpen"
                 :sessions="agentModeSessions"
                 :active-session-id="agentModeActiveSessionId"
                 :loading="agentModeLoadingSession"
@@ -2556,6 +2604,9 @@ onBeforeUnmount(() => {
                     layoutTransitionDirection ? 'transition-none' : '',
                 ]"
                 :style="ideToolPanelStyle"
+                :inert="!ideToolPanelOpen"
+                :aria-hidden="!ideToolPanelOpen"
+                @keydown.esc="!$event.defaultPrevented && closeToolPanel()"
             >
                 <NovelIdeToolPanel
                     v-model:width="leftPanelWidth"
@@ -2564,7 +2615,7 @@ onBeforeUnmount(() => {
                     :user-assets-mode="isUserAssetsWorkspace"
                     :workspace-title="displayNovelTitle"
                     :workspace-items="displayNovelItems"
-                    @close="activeLeftTab = null"
+                    @close="closeToolPanel()"
                     @open-world-engine="openWorldEngineWorkbench"
                     @open-home="void openProjectPicker()"
                     @switch-workspace="void handleSwitchNovel($event)"
@@ -2583,6 +2634,8 @@ onBeforeUnmount(() => {
                     resizingAgentStudioPanel ? 'select-none transition-none' : '',
                 ]"
                 :style="agentStudioStyle"
+                :inert="isAgentMode && !agentStudioPanelOpen"
+                :aria-hidden="isAgentMode && !agentStudioPanelOpen"
             >
                 <template v-if="isAgentMode && agentStudioPanelOpen">
                     <div ref="agentStudioResizeHandleRef" class="group absolute -left-1 top-0 z-30 h-full w-2 cursor-col-resize">
@@ -2698,6 +2751,7 @@ onBeforeUnmount(() => {
             </main>
 
             <!-- Agent Chat Surface：默认是 IDE 右侧面板；未来 Agent layout 仍复用同一实例。 -->
+            <Transition name="workbench-agent-drawer">
             <section
                 v-if="isAgentMode || displayAgentPanelOpen"
                 data-agent-panel
@@ -2709,6 +2763,8 @@ onBeforeUnmount(() => {
                     resizingAgentPanel ? 'select-none transition-none' : '',
                 ]"
                 :style="agentSlotStyle"
+                :inert="!agentSurfaceActive"
+                @keydown.esc="!$event.defaultPrevented && closeAgentSurface()"
             >
                 <template v-if="!isAgentMode">
                     <div ref="agentResizeHandleRef" data-agent-panel-resize-handle class="group absolute -left-1 top-0 z-30 h-full w-2 cursor-col-resize">
@@ -2730,6 +2786,7 @@ onBeforeUnmount(() => {
                     @open-history-inbox="historyInboxOpen = true"
                 />
             </section>
+            </Transition>
         </div>
 
         <NovelIdeSettingsDialog v-model="settingsDialogOpen" />
@@ -2775,6 +2832,162 @@ onBeforeUnmount(() => {
 .novel-ide-page {
     --ide-toolbar-height: 48px;
     --editor-min-height: calc(100vh - var(--ide-toolbar-height));
+    height: 100dvh;
+    gap: 12px;
+    padding: 12px;
+}
+
+:global(.desktop-page-shell) > .novel-ide-page {
+    height: 100%;
+}
+
+.workbench-heading {
+    display: flex;
+    min-height: 64px;
+    flex: none;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px 12px;
+}
+
+.workbench-heading__title {
+    margin: 0;
+    font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", SimSun, serif;
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+}
+
+.workbench-heading__action {
+    display: inline-flex;
+    min-width: 36px;
+    height: 36px;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 0 10px;
+    color: var(--text-secondary);
+    background: var(--bg-panel);
+    font-size: 12px;
+    transition: background 180ms ease, color 180ms ease;
+}
+
+.workbench-heading__action:hover,
+.workbench-heading__action[aria-expanded="true"] {
+    background: var(--accent-bg);
+    color: var(--accent-text);
+}
+
+.workbench-heading__action:focus-visible {
+    outline: 2px solid var(--accent-main);
+    outline-offset: 3px;
+}
+
+.mode-transition-ide-tools {
+    margin-right: 12px;
+    border-radius: 16px;
+}
+
+.mode-transition-ide-tools[aria-hidden="true"] {
+    margin-right: 0;
+}
+
+.mode-transition-studio,
+.mode-transition-agent {
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    box-shadow: 0 4px 20px color-mix(in srgb, var(--shadow-color) 4%, transparent);
+}
+
+.mode-transition-studio[aria-hidden="true"] {
+    border-width: 0;
+}
+
+.mode-transition-agent {
+    margin-left: 12px;
+}
+
+.workbench-panels :deep(.agent-mode-session-sidebar) {
+    border-radius: 16px;
+}
+
+.workbench-drawer-backdrop {
+    position: absolute;
+    inset: 0;
+    z-index: 35;
+    border: 0;
+    background: color-mix(in srgb, var(--shadow-color) 18%, transparent);
+    border-radius: 16px;
+}
+
+.workbench-agent-drawer-enter-active,
+.workbench-agent-drawer-leave-active {
+    transition: opacity 220ms ease, transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.workbench-agent-drawer-enter-from,
+.workbench-agent-drawer-leave-to {
+    opacity: 0;
+    transform: translateX(24px);
+}
+
+@media (max-width: 799px) {
+    .novel-ide-page {
+        padding: 6px;
+        gap: 6px;
+    }
+
+    .workbench-heading {
+        padding: 0 4px 8px;
+        min-height: 56px;
+        gap: 4px;
+    }
+
+    .workbench-heading__title {
+        font-size: 17px;
+    }
+
+    .workbench-heading__label {
+        display: none;
+    }
+
+    .mode-transition-ide-tools {
+        position: absolute;
+        inset: 0 auto 0 0;
+        max-width: 100%;
+        z-index: 40;
+        margin: 0;
+        box-shadow: 8px 0 24px color-mix(in srgb, var(--shadow-color) 12%, transparent);
+    }
+
+    .mode-transition-agent {
+        z-index: 40;
+        min-width: 0;
+        max-width: 100%;
+        margin-left: 0;
+    }
+
+    [data-workbench-layout-mode="ide"] .mode-transition-agent {
+        position: absolute;
+        inset: 0 0 0 auto;
+    }
+
+    [data-workbench-layout-mode="agent"] .mode-transition-studio {
+        position: absolute;
+        inset: 0 0 0 auto;
+        z-index: 45;
+        max-width: 100%;
+    }
+
+    .workbench-panels :deep(.agent-mode-session-sidebar) {
+        position: absolute;
+        inset: 0 auto 0 0;
+        z-index: 46;
+        max-width: 100%;
+    }
 }
 
 .plain-text-editor {
@@ -2795,6 +3008,12 @@ onBeforeUnmount(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
+    .workbench-panels,
+    .workbench-panels :deep(*),
+    .workbench-heading__action {
+        transition-duration: 0s !important;
+        animation-duration: 0s !important;
+    }
     .project-loading-fill {
         transition: none;
     }

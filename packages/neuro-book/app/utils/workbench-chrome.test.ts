@@ -34,6 +34,7 @@ describe("Workbench Chrome", () => {
             ["characters", true],
             ["plot", true],
             ["world", true],
+            ["inspiration", true],
         ]);
         expect(bookshelf.secondary.map((item) => [item.id, item.disabled])).toEqual([
             ["trace", true],

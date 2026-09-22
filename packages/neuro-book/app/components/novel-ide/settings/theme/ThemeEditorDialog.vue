@@ -277,11 +277,9 @@ watch(previewVars, (vars) => {
 
 <template>
     <!-- 主题编辑器浮动窗口：无遮罩，可拖动，整个 IDE 即实时预览 -->
-    <DialogWindow
+    <DialogWindow size="workbench"
         :model-value="modelValue"
         :title="dialogTitle"
-        :width="560"
-        height="min(760px, calc(100vh - 88px))"
         :busy="saving"
         body-class="flex min-h-0 flex-1 flex-col overflow-hidden"
         @request-close="cancelEditing"

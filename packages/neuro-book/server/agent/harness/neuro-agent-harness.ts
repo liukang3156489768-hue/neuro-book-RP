@@ -1334,6 +1334,8 @@ export class NeuroAgentHarness {
                 caller,
                 messageIdentity,
                 modelKey: invocationModelKey,
+                thinkingLevel: input.thinkingLevel,
+                requestOptionsPatch: input.requestOptionsPatch,
                 clientMessageId: input.clientMessageId,
                 intent: input.mode === "steer" ? "steer" : "normal",
                 sourceQueueItemId: input.sourceQueueItemId,
@@ -1960,6 +1962,8 @@ export class NeuroAgentHarness {
         messageIdentity: AgentMessageIdentity;
         /** 本 invocation 的模型覆盖；只参与本次 prepare，不写 session model_change。 */
         modelKey?: string;
+        thinkingLevel?: ThinkingLevel;
+        requestOptionsPatch?: Record<string, JsonValue>;
         /** 当前用户输入的稳定关联 ID；continue/resolution 为空。 */
         clientMessageId?: string;
         intent: "normal" | "steer";
@@ -2067,7 +2071,7 @@ export class NeuroAgentHarness {
         const runProfile = await profiles.get(context.profileKey);
         const toolKeys = [...runProfile.rootToolKeys];
         const executionToolKeys = runProfile.toolKeys ? [...runProfile.toolKeys] : undefined;
-        const thinkingLevel = this.resolveThinkingLevel(context, config, model);
+        const thinkingLevel = input.thinkingLevel ?? this.resolveThinkingLevel(context, config, model);
         const systemPrompt = prepareRunHooks.profilePrompt ? prepared.plan.systemPrompt ?? context.systemPrompt : context.systemPrompt;
         const preparedModelContextMessages = prepareRunHooks.sessionContext === true ? prepared.plan.modelContextMessages ?? [] : [];
         const appendingCount = prepareRunHooks.sessionContext === true
@@ -2107,7 +2111,7 @@ export class NeuroAgentHarness {
             model,
             apiKey,
             timeoutMs: providerOptions.timeoutMs,
-            requestOptions: providerOptions.requestOptions,
+            requestOptions: {...providerOptions.requestOptions, ...(input.requestOptionsPatch ?? {})},
             compaction: prepared.runtimeSettings.compaction,
             fileChangeDiffMaxChars: prepared.runtimeSettings.fileChangeNotice.diffMaxChars,
             piTrace: this.piTraceSettings(config),

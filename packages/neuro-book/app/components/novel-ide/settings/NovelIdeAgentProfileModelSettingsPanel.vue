@@ -589,9 +589,7 @@ defineExpose({
 
 <template>
     <!-- Agent Profile 模型设置 -->
-    <!-- xl 下面板绝对定位铺满 section 可视区（包含块 = L888 的 relative section），标题固定，双栏各自独立滚动；
-         若用 h-full 百分比链，滚动容子元素的百分比高度会退化为内容高度导致约束失效。小屏（<xl）保持自然流 + 外层滚动。 -->
-    <div class="space-y-4 pt-1 xl:absolute xl:inset-0 xl:flex xl:flex-col">
+    <div class="min-w-0 space-y-4 pt-1 xl:min-h-0 xl:flex-1 xl:flex xl:flex-col">
         <div class="flex shrink-0 flex-wrap items-center justify-between gap-4">
             <div class="max-w-xl">
                 <h3 class="text-base font-semibold text-[var(--text-main)]">{{ isProjectScope ? t("settings.panels.profileModels.projectTitle") : t("settings.panels.profileModels.globalTitle") }}</h3>

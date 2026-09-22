@@ -772,25 +772,27 @@ function updateDesktopCloseBehavior(value: string): void {
         :model-value="props.modelValue"
         :title="t('settings.title')"
         size="full"
+        header-class="settings-dialog-header !px-6 !py-4 shrink-0"
+        body-class="settings-dialog-body !p-0 !gap-0 min-h-0 !overflow-hidden"
         overlay-type="opaque"
+        :close-on-esc="!themeEditorOpen && !themeDeleteTarget"
         :busy="false"
         :show-footer="false"
         @request-close="closeDialog"
         @update:model-value="emit('update:modelValue', $event)"
     >
-        <!-- 固定高度，顶部配置目标栏 + 左右分栏 -->
-        <div class="flex h-full flex-col gap-4">
-            <!-- 配置目标栏 -->
-            <section class="shrink-0 rounded-2xl border border-[var(--border-color)] border-opacity-70 bg-[var(--bg-input)] bg-opacity-20 px-4 py-3 shadow-sm">
-                <div class="flex flex-wrap items-start justify-between gap-3">
-                    <div class="min-w-0 space-y-3">
-                        <div class="flex min-w-0 flex-wrap items-center gap-2">
+        <div class="settings-shell">
+            <section class="settings-toolbar">
+                <div class="settings-toolbar-row">
+                    <div class="settings-scopes">
+                        <div class="settings-scope-list">
                             <button
                                 v-for="scope in scopeOptions"
                                 :key="scope.value"
                                 type="button"
-                                class="inline-flex h-9 items-center gap-2 rounded-lg border border-[var(--border-color)] border-opacity-60 px-3 text-xs font-medium transition-all duration-200 disabled:pointer-events-none disabled:opacity-45"
-                                :class="activeScope === scope.value ? 'border-[var(--accent-main)] border-opacity-30 bg-[var(--accent-bg)] text-[var(--accent-text)] shadow-sm' : 'bg-[var(--bg-input)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-main)]'"
+                                class="settings-scope-button"
+                                :class="{'is-active': activeScope === scope.value}"
+                                :aria-pressed="activeScope === scope.value"
                                 :disabled="scope.value === 'project' && !projectScopeAvailable"
                                 :title="scope.value === 'project' && !projectScopeAvailable ? t('settings.scope.project.unavailable') : scope.description"
                                 @click="selectScope(scope.value)"
@@ -801,8 +803,8 @@ function updateDesktopCloseBehavior(value: string): void {
                         </div>
                     </div>
 
-                    <div class="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                        <div v-if="activeScope === 'project'" class="flex min-w-[300px] items-center gap-2 rounded-lg border border-[var(--border-color)] border-opacity-60 bg-[var(--bg-panel)] bg-opacity-35 px-3 py-2">
+                    <div class="settings-actions">
+                        <div v-if="activeScope === 'project'" class="settings-project-target">
                             <span class="shrink-0 text-[11px] font-semibold text-[var(--text-muted)]">Project</span>
                             <span class="min-w-0 flex-1 truncate text-xs font-medium text-[var(--text-main)]" :title="targetLabel">{{ targetLabel }}</span>
                         </div>
@@ -826,7 +828,6 @@ function updateDesktopCloseBehavior(value: string): void {
                             :disabled="activeSaveDisabled"
                             @click="void saveActivePanel()"
                         >
-                            <span v-if="activeSaveDirty && !activeSaveLoading" class="absolute inset-0 translate-y-full bg-white/20 transition-transform duration-300 ease-out group-hover:translate-y-0"></span>
                             <span class="relative flex items-center gap-1.5">
                                 <span v-if="activeSaveLoading || activeSaveSaving" class="i-lucide-loader-2 h-3.5 w-3.5 animate-spin"></span>
                                 <span v-else class="i-lucide-save h-3.5 w-3.5"></span>
@@ -837,19 +838,21 @@ function updateDesktopCloseBehavior(value: string): void {
                 </div>
             </section>
 
-            <div class="flex min-h-0 flex-1 flex-col gap-4 md:flex-row md:gap-6">
-                <!-- 左侧导航栏 - 清爽无边框 -->
-            <aside class="flex w-full min-w-0 flex-col pb-2 md:w-[220px] md:shrink-0">
+            <div class="settings-workspace">
+            <aside class="settings-navigation">
                 <div class="mb-3 mt-1 hidden px-3 md:block">
                     <div class="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)]">{{ activeScope === "browser" ? t("settings.scope.browserState") : t("settings.scope.configFile") }}</div>
                 </div>
 
-                <div class="flex min-w-0 gap-1.5 overflow-x-auto pb-1 md:flex-col md:overflow-visible md:pb-0">
+                <nav class="settings-section-list" :aria-label="t('settings.title')">
                     <button
                         v-for="item in visibleSectionItems"
                         :key="item.value"
-                        class="group relative flex min-w-max shrink-0 items-center gap-2 rounded-xl px-2 py-1.5 text-left transition-all duration-200 md:w-full md:gap-3 md:px-2.5 md:py-2.5"
-                        :class="activeSection === item.value ? 'bg-[var(--bg-input)] text-[var(--text-main)] shadow-[0_2px_8px_color-mix(in_srgb,var(--shadow-color)_4%,transparent)] border border-[var(--border-color)]' : 'border border-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:bg-opacity-40 hover:text-[var(--text-main)]'"
+                        type="button"
+                        class="settings-section-button group"
+                        :class="{'is-active': activeSection === item.value}"
+                        :aria-pressed="activeSection === item.value"
+                        :title="item.description"
                         @click="selectSection(item.value)"
                     >
                         <!-- 图标 -->
@@ -862,7 +865,7 @@ function updateDesktopCloseBehavior(value: string): void {
                             <span class="mt-0.5 hidden truncate text-[10px] text-[var(--text-muted)] md:block">{{ item.description }}</span>
                         </div>
                     </button>
-                </div>
+                </nav>
 
                 <!-- 底部版本信息 -->
                 <div class="mt-auto hidden pt-4 md:block">
@@ -885,9 +888,8 @@ function updateDesktopCloseBehavior(value: string): void {
             </aside>
 
             <!-- 右侧内容区 -->
-            <section class="min-w-0 flex-1 relative flex flex-col overflow-hidden">
-                <!-- 内部独立滚动 -->
-                <div class="flex-1 overflow-y-auto custom-scrollbar pr-2 pb-6">
+            <section class="settings-content">
+                <div class="settings-content-scroll custom-scrollbar" :class="{'settings-content-scroll--profile': activeSection === 'agent-profile-models'}">
                     <Transition name="fade-slide" mode="out-in">
                         <!-- 启动期安全配置：只读说明，避免把安全边界误解为可热更新的 Global Config。 -->
                         <div v-if="activeSection === 'security'" key="security" class="space-y-4 pt-1">
@@ -919,7 +921,7 @@ function updateDesktopCloseBehavior(value: string): void {
                         <!-- 前端设定 -->
                         <div v-else-if="activeSection === 'frontend'" key="frontend" class="space-y-4 pt-1">
                             <div class="grid gap-3">
-                                <div class="group flex items-center gap-4 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] px-5 py-4 shadow-sm transition-all duration-300 hover:shadow-md">
+                                <div class="settings-preference-row group flex items-center gap-4 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] px-5 py-4 shadow-sm transition-all duration-300 hover:shadow-md">
                                     <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--bg-input)] text-[var(--text-secondary)] transition-colors group-hover:bg-[var(--accent-bg)] group-hover:text-[var(--accent-main)]">
                                         <span class="i-lucide-languages h-5 w-5"></span>
                                     </div>
@@ -1042,7 +1044,7 @@ function updateDesktopCloseBehavior(value: string): void {
                                     </div>
                                 </div>
 
-                                <div class="group flex items-center gap-4 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] px-5 py-4 shadow-sm transition-all duration-300 hover:shadow-md">
+                                <div class="settings-preference-row group flex items-center gap-4 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] px-5 py-4 shadow-sm transition-all duration-300 hover:shadow-md">
                                     <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--bg-input)] text-[var(--text-secondary)] transition-colors group-hover:bg-[var(--accent-bg)] group-hover:text-[var(--accent-main)]">
                                         <span class="i-lucide-brain-circuit h-5 w-5"></span>
                                     </div>
@@ -1055,7 +1057,7 @@ function updateDesktopCloseBehavior(value: string): void {
                                     </div>
                                 </div>
 
-                                <div class="group flex items-center gap-4 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] px-5 py-4 shadow-sm transition-all duration-300 hover:shadow-md">
+                                <div class="settings-preference-row group flex items-center gap-4 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] px-5 py-4 shadow-sm transition-all duration-300 hover:shadow-md">
                                     <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--bg-input)] text-[var(--text-secondary)] transition-colors group-hover:bg-[var(--accent-bg)] group-hover:text-[var(--accent-main)]">
                                         <span class="i-lucide-layout h-5 w-5"></span>
                                     </div>
@@ -1084,7 +1086,7 @@ function updateDesktopCloseBehavior(value: string): void {
                             </div>
 
                             <div class="grid gap-3">
-                                <div class="group flex items-center gap-4 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] px-5 py-4 shadow-sm transition-all duration-300 hover:shadow-md">
+                                <div class="settings-preference-row group flex items-center gap-4 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] px-5 py-4 shadow-sm transition-all duration-300 hover:shadow-md">
                                     <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--bg-input)] text-[var(--text-secondary)] transition-colors group-hover:bg-[var(--accent-bg)] group-hover:text-[var(--accent-main)]">
                                         <span class="i-lucide-type h-5 w-5"></span>
                                     </div>
@@ -1152,7 +1154,7 @@ function updateDesktopCloseBehavior(value: string): void {
                                     </button>
                                 </div>
 
-                                <div class="group flex items-center gap-4 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] px-5 py-4 shadow-sm transition-all duration-300 hover:shadow-md">
+                                <div class="settings-preference-row group flex items-center gap-4 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-panel)] px-5 py-4 shadow-sm transition-all duration-300 hover:shadow-md">
                                     <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--bg-input)] text-[var(--text-secondary)] transition-colors group-hover:bg-[var(--accent-bg)] group-hover:text-[var(--accent-main)]">
                                         <span class="i-lucide-code-2 h-5 w-5"></span>
                                     </div>
@@ -1278,7 +1280,7 @@ function updateDesktopCloseBehavior(value: string): void {
                         </div>
 
                         <!-- Agent Profile 模型设定 -->
-                        <div v-else-if="activeSection === 'agent-profile-models'" key="agent-profile-models">
+                        <div v-else-if="activeSection === 'agent-profile-models'" key="agent-profile-models" class="settings-profile-panel">
                             <NovelIdeAgentProfileModelSettingsPanel ref="agentProfileModelSettingsPanelRef" :key="`profile-models:${settingsPanelKey}`" :scope="activeScope === 'project' ? 'project' : 'global'" :target-query="targetQuery" :target-label="targetLabel" />
                         </div>
 
@@ -1305,7 +1307,7 @@ function updateDesktopCloseBehavior(value: string): void {
     <Dialog
         :model-value="Boolean(themeDeleteTarget)"
         :title="t('settings.frontend.themeDeleteTitle')"
-        width="420px"
+        width="min(420px, calc(100vw - 24px))"
         overlay-type="opaque"
         show-cancel
         @confirm="void confirmDeleteTheme()"
@@ -1318,16 +1320,279 @@ function updateDesktopCloseBehavior(value: string): void {
 </template>
 
 <style scoped>
+:global(.nb-dialog-surface:has(> .settings-dialog-body)) {
+    border-radius: 22px;
+    box-shadow: 0 28px 90px color-mix(in srgb, var(--shadow-color) 18%, transparent);
+}
+
+:global(.fixed:has(> .nb-dialog-surface > .settings-dialog-body)) {
+    background: color-mix(in srgb, var(--shadow-color) 24%, transparent);
+    backdrop-filter: blur(6px);
+}
+
+.settings-shell {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    background: var(--bg-panel);
+}
+
+.settings-toolbar {
+    flex-shrink: 0;
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.settings-toolbar-row,
+.settings-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    min-width: 0;
+}
+
+.settings-scopes {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: thin;
+}
+
+.settings-scope-list {
+    display: flex;
+    width: max-content;
+    gap: 4px;
+    padding: 4px;
+    border-radius: 12px;
+    background: var(--bg-subtle);
+}
+
+.settings-scope-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 36px;
+    padding: 0 12px;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    transition: background-color 180ms ease, color 180ms ease;
+}
+
+.settings-scope-button:hover:not(:disabled),
+.settings-section-button:hover {
+    background: var(--bg-hover);
+    color: var(--text-main);
+}
+
+.settings-scope-button.is-active {
+    border-color: var(--border-color);
+    background: var(--bg-panel);
+    color: var(--accent-text);
+    box-shadow: 0 2px 5px color-mix(in srgb, var(--shadow-color) 5%, transparent);
+}
+
+.settings-scope-button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.settings-actions {
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.settings-project-target {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    max-width: 240px;
+    padding: 8px 12px;
+    border-radius: 9px;
+    background: var(--bg-subtle);
+}
+
+.settings-workspace {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+}
+
+.settings-navigation {
+    display: flex;
+    flex: 0 0 232px;
+    flex-direction: column;
+    min-width: 0;
+    padding: 24px 14px 16px;
+    overflow-y: auto;
+    border-right: 1px solid var(--border-color);
+    background: var(--bg-sidebar);
+}
+
+.settings-section-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+
+.settings-section-button {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    padding: 11px 10px;
+    border: 1px solid transparent;
+    border-radius: 12px;
+    color: var(--text-secondary);
+    text-align: left;
+    transition: background-color 180ms ease, color 180ms ease;
+}
+
+.settings-section-button.is-active {
+    border-color: var(--border-accent);
+    background: var(--accent-bg);
+    color: var(--accent-text);
+}
+
+.settings-shell :is(button, a):focus-visible {
+    outline: 2px solid var(--accent-main);
+    outline-offset: 2px;
+}
+
+.settings-content {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.settings-content-scroll {
+    flex: 1;
+    min-width: 0;
+    padding: clamp(20px, 2.4vw, 40px);
+    overflow: auto;
+    scrollbar-gutter: stable;
+    overscroll-behavior: contain;
+}
+
+.settings-content-scroll > div {
+    max-width: 1120px;
+    margin-inline: auto;
+}
+
+@media (min-width: 1280px) {
+    /* Profile 双栏需要确定的剩余高度，滚动由各栏承担，避免越过设置内容区。 */
+    .settings-content-scroll--profile,
+    .settings-profile-panel {
+        display: flex;
+        flex: 1;
+        flex-direction: column;
+        min-width: 0;
+        min-height: 0;
+    }
+
+    .settings-content-scroll--profile {
+        overflow: hidden;
+    }
+
+    .settings-profile-panel {
+        width: 100%;
+    }
+}
+
+@media (max-width: 1100px) {
+    .settings-preference-row {
+        flex-wrap: wrap;
+    }
+
+    .settings-preference-row > :last-child {
+        flex-basis: 100%;
+        width: 100%;
+    }
+}
+
+@media (max-width: 767px) {
+    .settings-toolbar {
+        padding: 10px 12px;
+    }
+
+    .settings-toolbar-row {
+        gap: 8px;
+    }
+
+    .settings-scopes,
+    .settings-actions {
+        width: 100%;
+    }
+
+    .settings-actions:empty {
+        display: none;
+    }
+
+    .settings-project-target {
+        flex: 1;
+    }
+
+    .settings-workspace {
+        flex-direction: column;
+    }
+
+    .settings-navigation {
+        flex: 0 0 auto;
+        padding: 10px 12px;
+        border-right: 0;
+        border-bottom: 1px solid var(--border-color);
+        overflow: hidden;
+    }
+
+    .settings-section-list {
+        flex-direction: row;
+        overflow-x: auto;
+        scrollbar-width: thin;
+    }
+
+    .settings-section-button {
+        flex-shrink: 0;
+        gap: 6px;
+        padding: 6px 9px;
+    }
+
+    .settings-content-scroll {
+        padding: 16px 12px 24px;
+    }
+}
+
 .fade-slide-enter-active,
 .fade-slide-leave-active {
-    transition: all 0.2s cubic-bezier(0.34, 1.15, 0.64, 1);
+    transition: opacity 160ms ease, transform 160ms ease;
 }
 .fade-slide-enter-from {
     opacity: 0;
-    transform: translateX(10px) scale(0.98);
+    transform: translateY(6px);
 }
 .fade-slide-leave-to {
     opacity: 0;
-    transform: translateX(-10px) scale(0.98);
+    transform: translateY(-4px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .settings-shell *,
+    .fade-slide-enter-active,
+    .fade-slide-leave-active {
+        transition: none;
+        animation: none;
+    }
 }
 </style>

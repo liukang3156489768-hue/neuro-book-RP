@@ -208,7 +208,7 @@ onClickOutside(filterPanelRef, () => {
 </script>
 
 <template>
-    <Dialog :model-value="props.modelValue" :title="t('agent.session.title')" width="min(1040px, calc(100vw - 32px))" height="min(760px, calc(100vh - 32px))" max-height="calc(100vh - 32px)" body-class="overflow-visible" :show-cancel="false" @confirm="emit('create')" @update:model-value="emit('update:modelValue', $event)">
+    <Dialog size="full" :model-value="props.modelValue" :title="t('agent.session.title')" body-class="overflow-visible" :show-cancel="false" @confirm="emit('create')" @update:model-value="emit('update:modelValue', $event)">
         <template #header>
             <div class="flex min-w-0 flex-1 items-center justify-between gap-3">
                 <div class="min-w-0">

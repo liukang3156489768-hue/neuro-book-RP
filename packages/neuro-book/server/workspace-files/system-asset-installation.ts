@@ -586,7 +586,7 @@ async function parseLegacySyncState(systemNbookRoot: string): Promise<LegacySync
     } catch (error) {
         throw legacySyncStateNeedsReview(statePath, "不是有效 JSON", error);
     }
-    if (typeof value !== "object" || value === null) throw legacySyncStateNeedsReview(statePath, "结构无效");
+    if (!isRecord(value)) throw legacySyncStateNeedsReview(statePath, "结构无效");
     const hasAssets = "assets" in value;
     const hasProfiles = "profiles" in value;
     // 条目级形状同样严格：旧投影写入的条目恒带字符串键（assetPath/fileName），
@@ -594,10 +594,10 @@ async function parseLegacySyncState(systemNbookRoot: string): Promise<LegacySync
     if ((hasAssets && !Array.isArray(value.assets)) || (hasProfiles && !Array.isArray(value.profiles)) || (!hasAssets && !hasProfiles)) {
         throw legacySyncStateNeedsReview(statePath, "结构无效");
     }
-    if (hasAssets && !value.assets.every((item) => typeof item === "object" && item !== null && "assetPath" in item && typeof item.assetPath === "string")) {
+    if (Array.isArray(value.assets) && !value.assets.every((item) => typeof item === "object" && item !== null && "assetPath" in item && typeof item.assetPath === "string")) {
         throw legacySyncStateNeedsReview(statePath, "assets 条目结构无效");
     }
-    if (hasProfiles && !value.profiles.every((item) => typeof item === "object" && item !== null && "fileName" in item && typeof item.fileName === "string")) {
+    if (Array.isArray(value.profiles) && !value.profiles.every((item) => typeof item === "object" && item !== null && "fileName" in item && typeof item.fileName === "string")) {
         throw legacySyncStateNeedsReview(statePath, "profiles 条目结构无效");
     }
     return value;

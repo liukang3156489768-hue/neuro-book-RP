@@ -46,11 +46,9 @@ const emit = defineEmits<{
 
 <template>
     <!-- Prompt 预览调试弹窗：变量输入与消息列表 -->
-    <Dialog
+    <Dialog size="full"
         :model-value="props.modelValue"
         title="Prompt 预览调试"
-        width="min(1380px, calc(100vw - 48px))"
-        height="min(860px, calc(100vh - 48px))"
         overlay-type="opaque"
         body-class="!gap-0 !overflow-hidden"
         :show-footer="false"

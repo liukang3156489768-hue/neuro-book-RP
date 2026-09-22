@@ -199,11 +199,9 @@ watch(() => [props.modelValue, props.node?.path, selectedFileContent.value], () 
 </script>
 
 <template>
-    <Dialog
+    <Dialog size="full"
         :model-value="props.modelValue"
         :title="draft?.title || t('ide.workspace.typedProfile.locationProfile')"
-        width="min(1160px, calc(100vw - 160px))"
-        height="min(740px, calc(100vh - 96px))"
         overlay-type="opaque"
         :show-footer="false"
         :busy="savingFile"

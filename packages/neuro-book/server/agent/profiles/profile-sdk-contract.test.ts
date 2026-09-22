@@ -173,7 +173,7 @@ export default defineAgentProfile({
         });
     });
 
-    it("14 个内置 Profile 只通过 SDK 完成空目标编译", async () => {
+    it("全部内置 Profile 只通过 SDK 完成空目标编译", async () => {
         const temporaryRoot = await mkdtemp(testHostPath("nbook-profile-sdk-"));
         temporaryRoots.push(temporaryRoot);
         const profileRoot = join(temporaryRoot, "profiles");
@@ -190,9 +190,11 @@ export default defineAgentProfile({
             orphanBudgetPolicy: "product",
         });
 
-        expect(result.manifest.entries).toHaveLength(14);
+        expect(sourceFiles.length).toBeGreaterThan(0);
+        expect(result.manifest.entries).toHaveLength(sourceFiles.length);
+        expect(result.manifest.entries.filter(entry => entry.status === "compile_failed")).toEqual([]);
         const ordinaryProfiles = result.manifest.profiles.filter((entry) => !["writer", "rp.writer"].includes(entry.profileKey));
-        expect(ordinaryProfiles).toHaveLength(12);
+        expect(ordinaryProfiles).toHaveLength(sourceFiles.length - 2);
         for (const profile of ordinaryProfiles) {
             const dependencyPaths = profile.dependencies.map((dependency) => dependency.path.replaceAll("\\", "/"));
             expect(dependencyPaths, profile.fileName).not.toContain("server/agent/profiles/writer-writing-reference.ts");
