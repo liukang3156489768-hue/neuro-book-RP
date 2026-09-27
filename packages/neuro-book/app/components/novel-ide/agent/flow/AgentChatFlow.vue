@@ -111,6 +111,7 @@ const emit = defineEmits<{
     (e: "empty-select-session", sessionId: number): void;
     (e: "empty-create-session"): void;
     (e: "empty-open-sessions"): void;
+    (e: "view-specialist-session", sessionId: number): void;
 }>();
 
 const scrollRef = ref<HTMLDivElement | null>(null);
@@ -419,6 +420,7 @@ defineExpose({ scrollToBottom: forceScrollToBottom, scrollRef });
                         :tool-call="node.toolCall"
                         :session-id="props.sessionId"
                         @copy="emit('copy-tool', $event)"
+                        @view-specialist-session="emit('view-specialist-session', $event)"
                     />
                 </slot>
             </div>

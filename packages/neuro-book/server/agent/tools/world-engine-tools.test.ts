@@ -39,6 +39,7 @@ describe("world engine agent tools", {timeout: 30_000}, () => {
             } as unknown as ToolExecutionContext["harness"],
             sessionId: 1,
             profileKey: "leader.default",
+            agentMode: "normal",
             workspaceRoot: resolveRuntimeWorkspaceRoot(),
             currentProject: invocationReady,
             invocationId: "world-engine-tools-test-invocation",

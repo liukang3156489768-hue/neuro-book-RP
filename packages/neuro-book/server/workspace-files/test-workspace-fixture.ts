@@ -1,4 +1,4 @@
-import {mkdir, mkdtemp, symlink} from "node:fs/promises";
+import {copyFile, mkdir, mkdtemp, symlink} from "node:fs/promises";
 import {execFile} from "node:child_process";
 import path from "node:path";
 import {randomUUID} from "node:crypto";
@@ -374,8 +374,13 @@ async function linkApplicationFiles(applicationRoot: string, isolatedRoot: strin
     for (const entry of linkedApplicationEntries) {
         const source = path.join(applicationRoot, entry.name);
         const target = path.join(isolatedRoot, entry.name);
-        await symlink(source, target, entry.type).catch((error) => {
-            if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
+        await symlink(source, target, entry.type).catch(async (error) => {
+            const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+            if (code === "ENOENT") return;
+            // Windows 未开启 Developer Mode 时禁止普通文件 symlink；复制这些小型入口文件即可保留
+            // snapshot 的模块解析语义，而目录 junction 仍必须失败即报错，避免悄悄复制 node_modules。
+            if (entry.type === "file" && (code === "EPERM" || code === "EACCES")) {
+                await copyFile(source, target);
                 return;
             }
             throw error;

@@ -6,6 +6,16 @@ describe("createBuiltinTools smoke test", () => {
         expect(() => createBuiltinTools()).not.toThrow();
     });
 
+    // OpenAI 兼容 provider 对整次请求校验全部函数定义，任一工具顶层不是 object 都会让会话每轮 400。
+    test("every tool declares a top-level object parameter schema", () => {
+        const invalid = createBuiltinTools()
+            .map((tool) => ({name: tool.name, schema: JSON.parse(JSON.stringify(tool.parameters)) as Record<string, unknown>}))
+            .filter(({schema}) => schema.type !== "object")
+            .map(({name}) => name);
+
+        expect(invalid).toEqual([]);
+    });
+
     test("should include unified world engine tool", () => {
         const tools = createBuiltinTools();
         const keys = tools.map((t) => t.key);

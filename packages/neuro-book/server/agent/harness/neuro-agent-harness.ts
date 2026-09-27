@@ -544,6 +544,12 @@ export class NeuroAgentHarness {
     private readonly toolExecution: ToolExecutionMode;
     private readonly enableSessionSummarizer: boolean;
     private readonly activeInvocations = new Map<number, AgentActiveInvocationDto>();
+    /**
+     * 已提交审批、批准后仍在同步执行的 tool call（仅本进程运行期）。pending 由“有 tool call 无 tool result”派生，
+     * 长耗时工具（委派子 Agent、workflow）执行期间若仍对外投影为待处理，审批面板会一直停留到执行结束。
+     * 进程中断时随内存丢失，重启后按落盘事实重新成为待处理，交由用户再次决定。
+     */
+    private readonly resolvingToolCalls = new Map<number, ReadonlySet<string>>();
     /** agent 在场探针的内存事实（仅本进程运行期，不落盘）：sessionId -> invocation 捕获的 ready generation。 */
     private readonly activeInvocationProjects = new Map<number, ReadyProjectSessionRef>();
     /** 当前 running 段登记的精确 Project generation operation；durable waiting 时释放。 */
@@ -4401,14 +4407,32 @@ export class NeuroAgentHarness {
             }
         }
 
+        const sessionId = snapshot.metadata.sessionId;
+        this.resolvingToolCalls.set(sessionId, new Set(pendingApprovals.map((pending) => pending.toolCallId)));
+        try {
+            await this.publishSessionState(sessionId, invocationId);
+            await this.executeResolutions(snapshot, context, pendingApprovals, resolutionMap, invocationId);
+        } finally {
+            this.resolvingToolCalls.delete(sessionId);
+        }
+    }
+
+    private async executeResolutions(
+        snapshot: SessionSnapshot,
+        context: NeuroSessionContext,
+        pendingApprovals: ReturnType<typeof findPendingApprovalCalls>,
+        resolutionMap: ReadonlyMap<string, AgentResolution>,
+        invocationId: string | undefined,
+    ): Promise<void> {
         // 按 pending approvals 顺序写入 tool results
         const entries: AppendManySessionEntryDraft[] = [];
+        const pendingWritePlans: SessionWritePlan[] = [];
         for (const pending of pendingApprovals) {
             const resolution = resolutionMap.get(pending.toolCallId)!;
             // Task 90: 注入的写审批批准后真实执行工具，以执行结果落库
-            const writerResult = await this.writerApprovalToolResult(snapshot, context, pending, resolution, invocationId);
+            const writerResult = await this.writerApprovalToolResult(snapshot, context, pending, resolution, pendingWritePlans, invocationId);
             // Task 111: 声明式 approvalRequired 工具（如 run_workflow）同一契约——批准后真实执行
-            const declaredResult = writerResult ?? await this.declaredApprovalToolResult(snapshot, pending, resolution, invocationId);
+            const declaredResult = writerResult ?? await this.declaredApprovalToolResult(snapshot, pending, resolution, pendingWritePlans, invocationId);
             const storedResolution = await this.withModeSwitchPreview(snapshot, pending, resolution);
             entries.push({
                 type: "message",
@@ -4418,7 +4442,7 @@ export class NeuroAgentHarness {
             entries.push(this.clearPendingUserResolutionEntry(pending));
         }
 
-        await this.executeWritePlan({
+        await this.writeExecutor.execute([{
             target: {sessionId: snapshot.metadata.sessionId},
             cause: "resolution",
             durability: "savePoint",
@@ -4426,7 +4450,7 @@ export class NeuroAgentHarness {
                 kind: "appendMany",
                 entries,
             }],
-        }, invocationId);
+        }, ...pendingWritePlans], invocationId);
 
         // 处理 mode switch transitions
         for (const pending of pendingApprovals) {
@@ -4446,12 +4470,13 @@ export class NeuroAgentHarness {
         if (!pending) {
             throw new Error("当前 session 没有等待中的审批 tool call");
         }
+        const pendingWritePlans: SessionWritePlan[] = [];
         // Task 90: 注入的写审批批准后真实执行工具，以执行结果落库
-        const writerResult = await this.writerApprovalToolResult(snapshot, context, pending, resolution, invocationId);
+        const writerResult = await this.writerApprovalToolResult(snapshot, context, pending, resolution, pendingWritePlans, invocationId);
         // Task 111: 声明式 approvalRequired 工具（如 run_workflow）同一契约——批准后真实执行
-        const declaredResult = writerResult ?? await this.declaredApprovalToolResult(snapshot, pending, resolution, invocationId);
+        const declaredResult = writerResult ?? await this.declaredApprovalToolResult(snapshot, pending, resolution, pendingWritePlans, invocationId);
         const storedResolution = await this.withModeSwitchPreview(snapshot, pending, resolution);
-        await this.executeWritePlan({
+        await this.writeExecutor.execute([{
             target: {sessionId: snapshot.metadata.sessionId},
             cause: "resolution",
             durability: "savePoint",
@@ -4466,7 +4491,7 @@ export class NeuroAgentHarness {
                     this.clearPendingUserResolutionEntry(pending),
                 ],
             }],
-        }, invocationId);
+        }, ...pendingWritePlans], invocationId);
 
         const approved = this.modeSwitchDecision(pending, resolution);
         if (approved !== null) {
@@ -5516,7 +5541,7 @@ export class NeuroAgentHarness {
                 }
             }
 
-            if (tool?.approvalRequired) {
+            if (this.requiresDeclaredApproval(tool, input.agentMode, toolCall.arguments)) {
                 await flushSegment();
                         const approvalError = await this.validateUserResolutionTool(input.executionToolKeys, input.toolOverrides, input.workspaceRoot, input.currentProject, toolCall);
                 if (approvalError) {
@@ -5648,6 +5673,7 @@ export class NeuroAgentHarness {
         currentProject: ReadyProjectSessionRef | null;
         profileKey: string;
         invocationId?: string;
+        agentMode: AgentMode;
         executionToolKeys: string[];
         toolOverrides: Record<string, NeuroAgentTool>;
         enqueueSavePointWrite?: (plan: SessionWritePlan, source: {toolCallIndex: number; toolCallId: string}) => void;
@@ -5727,6 +5753,7 @@ export class NeuroAgentHarness {
         currentProject: ReadyProjectSessionRef | null;
         profileKey: string;
         invocationId?: string;
+        agentMode: AgentMode;
         executionToolKeys: string[];
         toolOverrides: Record<string, NeuroAgentTool>;
         enqueueSavePointWrite?: (plan: SessionWritePlan, source: {toolCallIndex: number; toolCallId: string}) => void;
@@ -5758,6 +5785,7 @@ export class NeuroAgentHarness {
         currentProject: ReadyProjectSessionRef | null;
         profileKey: string;
         invocationId?: string;
+        agentMode: AgentMode;
         executionToolKeys: string[];
         toolOverrides: Record<string, NeuroAgentTool>;
         enqueueSavePointWrite?: (plan: SessionWritePlan, source: {toolCallIndex: number; toolCallId: string}) => void;
@@ -5785,6 +5813,7 @@ export class NeuroAgentHarness {
             currentProject: input.currentProject,
             profileKey: input.profileKey,
             invocationId: input.invocationId,
+            agentMode: input.agentMode,
             executionToolKeys: input.executionToolKeys,
             toolOverrides: input.toolOverrides,
             enqueueSavePointWrite: input.enqueueSavePointWrite,
@@ -5975,6 +6004,7 @@ export class NeuroAgentHarness {
         context: NeuroSessionContext,
         pending: {toolCallId: string; toolName: string; args: Record<string, unknown>},
         resolution: AgentResolution,
+        pendingWritePlans: SessionWritePlan[],
         invocationId?: string,
     ): Promise<StoredToolResultMessage | null> {
         const runtime = await this.resolveProfileRuntime(snapshot.metadata.profileKey);
@@ -6003,8 +6033,12 @@ export class NeuroAgentHarness {
                 : this.readyProjectForMetadata(snapshot.metadata),
             profileKey: snapshot.metadata.profileKey,
             invocationId,
+            agentMode: this.repo.reduce(snapshot).agentMode,
             executionToolKeys: [tool.key],
             toolOverrides: {[pending.toolName]: tool},
+            enqueueSavePointWrite: (plan) => {
+                pendingWritePlans.push(plan);
+            },
             toolCallIndex: 0,
             toolCall: {
                 type: "toolCall",
@@ -6029,10 +6063,24 @@ export class NeuroAgentHarness {
      * （与 Task 90 写审批同一契约——审批不是结果，执行才是），拒绝时落库引导文本。
      * 注意：工具可能长时间运行（如 run_workflow 跑完整个编排），resume invocation 会阻塞到执行结束。
      */
+    /**
+     * 声明式审批是否在该模式下注入。
+     *
+     * `approvalConditional` 表示工具自己按模式区分范围（规划工具：讨论逐项审批，自动只审批删除）；
+     * 其余 `approvalRequired` 工具在任何模式下都要审批。工具抛错时保守地要求审批，避免因参数异常静默跳过审核。
+     */
+    private requiresDeclaredApproval(tool: NeuroAgentTool | undefined, agentMode: AgentMode, args: unknown): boolean {
+        if (!tool?.approvalRequired) return false;
+        if (!tool.approvalConditional) return true;
+        if (isReadonlyMode(agentMode)) return true;
+        return tool.requiresApproval?.({args, agentMode}) ?? true;
+    }
+
     private async declaredApprovalToolResult(
         snapshot: SessionSnapshot,
         pending: {toolCallId: string; toolName: string; args: Record<string, unknown>},
         resolution: AgentResolution,
+        pendingWritePlans: SessionWritePlan[],
         invocationId?: string,
     ): Promise<StoredToolResultMessage | null> {
         const runtime = await this.resolveProfileRuntime(snapshot.metadata.profileKey);
@@ -6041,6 +6089,10 @@ export class NeuroAgentHarness {
             : this.tools.get(pending.toolName);
         // 只处理声明式审批工具；userInputRequest / switch_mode 等有自己的 resolution 语义
         if (!tool?.approvalRequired || tool.userInputRequest || pending.toolName === "switch_mode") {
+            return null;
+        }
+        // 会话模式需要从 reduce 后的上下文取：SessionSnapshot 本身只有 append-only 记录。
+        if (!this.requiresDeclaredApproval(tool, this.repo.reduce(snapshot).agentMode, pending.args)) {
             return null;
         }
         const approved = this.resolutionApprovalDecision(resolution) === true;
@@ -6052,6 +6104,7 @@ export class NeuroAgentHarness {
                 isError: true,
             });
         }
+        // approval continuation 没有原 turn frame，工具写入应与 resolution transcript 共用 save point。
         const executed = await this.executeTool({
             sessionId: snapshot.metadata.sessionId,
             workspaceRoot: this.workspaceRoot,
@@ -6060,8 +6113,12 @@ export class NeuroAgentHarness {
                 : this.readyProjectForMetadata(snapshot.metadata),
             profileKey: snapshot.metadata.profileKey,
             invocationId,
+            agentMode: this.repo.reduce(snapshot).agentMode,
             executionToolKeys: [tool.key],
             toolOverrides: {[pending.toolName]: tool},
+            enqueueSavePointWrite: (plan) => {
+                pendingWritePlans.push(plan);
+            },
             toolCallIndex: 0,
             toolCall: {
                 type: "toolCall",
@@ -6086,6 +6143,7 @@ export class NeuroAgentHarness {
         currentProject: ReadyProjectSessionRef | null;
         profileKey: string;
         invocationId?: string;
+        agentMode: AgentMode;
         executionToolKeys: string[];
         toolOverrides: Record<string, NeuroAgentTool>;
         enqueueSavePointWrite?: (plan: SessionWritePlan, source: {toolCallIndex: number; toolCallId: string}) => void;
@@ -6132,6 +6190,7 @@ export class NeuroAgentHarness {
                 workspaceRoot: input.workspaceRoot,
                 currentProject: input.currentProject,
                 invocationId: input.invocationId,
+                agentMode: input.agentMode,
                 vars: await this.createVariableAccessor(input.sessionId, input.invocationId),
                 attachmentCodec: this.attachmentCodec,
                 sessionWrites: new ToolSessionWriteSink({
@@ -7461,7 +7520,9 @@ export class NeuroAgentHarness {
             () => this.resolveProfileRuntime(context.profileKey),
         );
         const pendingMessages = storedMessagesForText(context.messages);
-        const pendingApprovals = findPendingApprovalCalls(pendingMessages, await this.userResolutionToolKeysForSnapshot(currentSnapshot, profileRuntime.profile));
+        const resolving = this.resolvingToolCalls.get(sessionId);
+        const pendingApprovals = findPendingApprovalCalls(pendingMessages, await this.userResolutionToolKeysForSnapshot(currentSnapshot, profileRuntime.profile))
+            .filter((pending) => !resolving?.has(pending.toolCallId));
         const baseSummary = this.repo.summary(currentSnapshot);
         const activeInvocation = this.resolveActiveInvocation(sessionId, baseSummary.status, pendingApprovals, currentSnapshot);
         const status = this.resolveSessionStatus(sessionId, baseSummary.status, context.archived, activeInvocation);

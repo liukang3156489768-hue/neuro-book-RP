@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {DialogWindow} from "@notnotype/nb-ui/components";
+import Dialog from "nbook/app/components/common/Dialog.vue";
 import {INSPIRATION_CATEGORIES, INSPIRATION_CATEGORY_LABELS, type InspirationCategory} from "nbook/shared/dto/inspiration.dto";
 import {useInspirationWorkbench} from "nbook/app/composables/useInspirationWorkbench";
 
@@ -21,7 +21,18 @@ function normalizeTemperature(): void { const value = Number(temperature.value);
 </script>
 
 <template>
-    <DialogWindow size="lg" :model-value="props.modelValue" title="Inspiration 设计工作台" :busy="loading || saving" body-class="overflow-hidden p-0" @update:model-value="emit('update:modelValue', $event)">
+    <Dialog
+        :model-value="props.modelValue"
+        width="100vw"
+        height="100dvh"
+        max-height="100dvh"
+        :show-footer="false"
+        :close-on-overlay="false"
+        title="Inspiration 设计工作台"
+        :busy="loading || saving"
+        body-class="!gap-0 !overflow-hidden !p-0"
+        @update:model-value="emit('update:modelValue', $event)"
+    >
         <div class="workbench">
             <aside class="sessions" aria-label="聊天记录">
                 <div class="sidebar-header"><strong>聊天记录</strong><button type="button" class="icon-button" title="新建聊天" @click="workbench.createConversation()"><span class="i-lucide-plus h-4 w-4"></span></button></div>
@@ -78,7 +89,7 @@ function normalizeTemperature(): void { const value = Number(temperature.value);
                 <button v-if="draft" type="button" class="primary-button save-button" :disabled="saving || !artifacts.length" @click="save()">{{ saving ? '保存中…' : '保存已审阅成果' }}</button>
             </section>
         </div>
-    </DialogWindow>
+    </Dialog>
 </template>
 
 <style scoped>

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import {NB_POPOVER_Z_INDEX, NB_Z_INDEX} from "@notnotype/nb-ui/theme";
+import {useDialogKeyboardStack} from "@notnotype/nb-ui/composables";
 import { THEME_HOST_SELECTOR } from "nbook/app/utils/theme/host";
-import {computed, getCurrentInstance, onBeforeUnmount, onMounted, provide, ref, watch} from "vue";
+import {computed, getCurrentInstance, onBeforeUnmount, onMounted, provide, ref} from "vue";
 /**
  * 通用对话框组件。
  *
@@ -205,27 +206,18 @@ const handleOverlayContextMenu = (event: MouseEvent): void => {
  * 监听键盘 Esc。
  */
 const handleKeydown = (event: KeyboardEvent): void => {
+    const target = event.target;
+    if (target instanceof Element && target.closest('[role="listbox"], [data-reka-select-content], [data-radix-select-content]')) {
+        return;
+    }
     if (event.key === "Escape" && props.closeOnEsc) {
+        event.preventDefault();
         requestClose("esc");
     }
 };
-
-watch(() => props.modelValue, (visible) => {
-    if (!import.meta.client) {
-        return;
-    }
-
-    if (visible) {
-        document.addEventListener("keydown", handleKeydown);
-    } else {
-        document.removeEventListener("keydown", handleKeydown);
-    }
-});
+useDialogKeyboardStack(() => props.modelValue, handleKeydown);
 
 onBeforeUnmount(() => {
-    if (import.meta.client) {
-        document.removeEventListener("keydown", handleKeydown);
-    }
     overlayPointerButton.value = null;
 });
 
@@ -259,13 +251,16 @@ provide(NB_POPOVER_Z_INDEX, NB_Z_INDEX.dialog + 1);
             ]" @pointerdown.self="handleOverlayPointerDown" @pointerup.self="handleOverlayPointerUp" @contextmenu.self="handleOverlayContextMenu">
                 <!-- 对话框主体 -->
                 <div
+                    role="dialog"
+                    aria-modal="true"
+                    :aria-label="props.title || undefined"
                     class="nb-dialog-surface flex flex-col overflow-hidden rounded-lg border border-[var(--border-color)] bg-[var(--bg-panel)] text-[var(--text-main)] transform"
                     :data-dialog-size="props.size"
                     data-dialog-surface
                     :style="{ width: resolvedWidth, height: resolvedHeight, maxHeight: resolvedMaxHeight }"
                 >
                     <!-- header 区域 -->
-                    <div v-if="props.showHeader" class="flex items-center justify-between px-5 py-2 border-b border-[var(--border-color)]" :class="props.headerClass">
+                    <div v-if="props.showHeader" class="flex min-w-0 shrink-0 items-center justify-between px-5 py-2 border-b border-[var(--border-color)]" :class="props.headerClass">
                         <slot name="header">
                             <div class="flex min-w-0 flex-1 items-center gap-3">
                                 <span class="min-w-0 flex-1 text-base font-semibold text-[var(--text-main)] leading-snug tracking-wide">{{ props.title }}</span>
@@ -278,7 +273,7 @@ provide(NB_POPOVER_Z_INDEX, NB_Z_INDEX.dialog + 1);
                     </div>
 
                     <!-- body 区域 -->
-                    <div class="flex-1 flex flex-col gap-4 overflow-y-auto px-5 py-4 text-[14px] leading-relaxed text-[var(--text-secondary)]" :class="props.bodyClass">
+                    <div class="min-h-0 min-w-0 flex-1 flex flex-col gap-4 overflow-y-auto px-5 py-4 text-[14px] leading-relaxed text-[var(--text-secondary)]" :class="props.bodyClass">
                         <slot />
                     </div>
 

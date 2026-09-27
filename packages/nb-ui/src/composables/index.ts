@@ -1,4 +1,5 @@
 export * from "./useAnchoredPopup";
+export * from "./useDialogKeyboardStack";
 export * from "./useFloatingScrollbar";
 export * from "./useDropdownTruncatedHeight";
 export * from "./useDropdownSurfaceStyle";

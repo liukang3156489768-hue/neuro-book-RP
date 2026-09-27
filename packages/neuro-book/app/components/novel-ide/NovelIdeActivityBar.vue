@@ -46,6 +46,7 @@ const props = defineProps<{
     userAssetsMode: boolean;
     currentUser: AuthUserDto | null;
     inspirationOpen?: boolean;
+    outlineOpen?: boolean;
     /** 容器条目是否可作为拖动源 / 落点（主侧栏的容器切换就在这条活动栏上）。 */
     allowContainerMove?: boolean;
     allowViewMove?: boolean;
@@ -59,6 +60,7 @@ const emit = defineEmits<{
     (event: "open-container", containerId: string): void;
     (event: "open-world-engine"): void;
     (event: "open-inspiration"): void;
+    (event: "open-outline-workbench"): void;
     (event: "open-trace-viewer"): void;
     (event: "open-history-inbox"): void;
     (event: "open-plot-workbench"): void;
@@ -122,6 +124,7 @@ const containerItems = computed<ActivityItem[]>(() => props.containers.map((cont
 const toolItems = computed<ActivityItem[]>(() => [
     ...activityItems.value.tools.map(toActivityItem),
     {id: "inspiration", label: "设计工作台", icon: "i-lucide-lightbulb", active: props.inspirationOpen === true, disabled: !props.surfaceActive || props.userAssetsMode, reason: props.userAssetsMode ? t("ide.activityBar.needOpenProject") : undefined},
+    {id: "outline", label: "大纲规划", icon: "i-lucide-notebook-tabs", active: props.outlineOpen === true, disabled: !props.surfaceActive || props.userAssetsMode, reason: props.userAssetsMode ? t("ide.activityBar.needOpenProject") : undefined},
 ]);
 const footerItems = computed<ActivityItem[]>(() => activityItems.value.footer.map(toActivityItem));
 
@@ -135,6 +138,7 @@ function invoke(id: string): void {
         case "plot": emit("open-plot-workbench"); return;
         case "world": emit("open-world-engine"); return;
         case "inspiration": emit("open-inspiration"); return;
+        case "outline": emit("open-outline-workbench"); return;
         case "trace": emit("open-trace-viewer"); return;
         case "history": emit("open-history-inbox"); return;
         case "settings": emit("open-settings"); return;

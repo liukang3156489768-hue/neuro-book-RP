@@ -22,7 +22,7 @@ import {AgentAbortNotAllowedError} from "nbook/server/agent/session/abort-not-al
 import {AgentAbortDurabilityError} from "nbook/server/agent/session/abort-durability-error";
 import {AttachmentError} from "nbook/server/agent/attachments/types";
 import {assertPublicToolCallId} from "nbook/shared/agent/public-tool-identity";
-import {AgentSessionIdSchema} from "nbook/shared/dto/agent-session.dto";
+import {AgentInvokeRequestDtoSchema, AgentSessionIdSchema} from "nbook/shared/dto/agent-session.dto";
 
 describe("agent session http helpers", () => {
     it("createAgentSession 调用 harness.createAgent", async () => {
@@ -252,6 +252,15 @@ describe("agent session http helpers", () => {
             block: undefined,
             onEvent: undefined,
         });
+    });
+
+    it("invoke 的 temperature 只作为本次 provider 请求覆盖传给 harness", async () => {
+        const invokeAgent = vi.fn(async () => ({sessionId: 12, invocationId: "run-1", status: "completed"}));
+
+        await invokeAgentSession(12, {mode: "continue", resolutions: [], temperature: 0.3}, {invokeAgent} as never);
+
+        expect(invokeAgent).toHaveBeenCalledWith(expect.objectContaining({requestOptionsPatch: {temperature: 0.3}}));
+        expect(AgentInvokeRequestDtoSchema.safeParse({mode: "continue", temperature: 2.1}).success).toBe(false);
     });
 
     it.each([

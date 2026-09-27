@@ -88,7 +88,7 @@ function unscaledRect(element: HTMLElement): DOMRect {
 }
 // 统一浮层材质、同心律视口、黄金截半高度与 macOS 悬浮滚动条单一真相源
 const {
-    popoverStyle: floatingPopoverStyle,
+    popoverZIndex,
     popoverClasses,
     setViewportRef,
     viewportStyle,
@@ -165,6 +165,7 @@ function scheduleSubmenu(item: DropdownItem | null, trigger: HTMLElement, depth 
                 :avoid-collisions="true"
                 :collision-padding="8"
                 :class="[popoverClasses, resolvedMenuClass]"
+                :style="{zIndex: popoverZIndex}"
                 v-bind="props.contentProps"
             >
                 <!-- 滚动视口（自适应双向渐隐 + 隐藏原生滚动条） -->
@@ -211,7 +212,7 @@ function scheduleSubmenu(item: DropdownItem | null, trigger: HTMLElement, depth 
                 role="menu"
                 class="nb-ui-popover-surface nb-ui-menu-surface nb-menu-level fixed overflow-hidden p-1.5"
                 :data-switching="level.switching"
-                :style="level.style"
+                :style="{...level.style, zIndex: popoverZIndex + depth + 1}"
             >
                 <div class="nb-menu-level-content">
                     <MenuNodes :items="level.value.children ?? []" :active="cascade.levels.value[depth + 1]?.value" :item-class="itemClassList" @select="handleSelect" @hover="(item, trigger, immediate) => scheduleSubmenu(item, trigger, depth + 1, immediate)" />

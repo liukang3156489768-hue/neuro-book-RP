@@ -1814,6 +1814,18 @@ function isSaveShortcut(event: KeyboardEvent): boolean {
     text-align: justify;
 }
 
+:deep(.nb-foreshadow-marker) {
+    border-radius: 3px;
+    text-decoration-line: underline;
+    text-decoration-style: solid;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 3px;
+    cursor: help;
+}
+
+:deep(.nb-foreshadow-marker--plant) { text-decoration-color: var(--success); }
+:deep(.nb-foreshadow-marker--reinforce) { text-decoration-color: var(--warning); }
+:deep(.nb-foreshadow-marker--recover) { text-decoration-color: var(--accent-main); }
 :deep(.nb-inline-ai-reference-mark) {
     text-decoration-line: underline;
     text-decoration-style: wavy;

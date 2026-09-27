@@ -456,6 +456,7 @@ function createToolContext(): ToolExecutionContext {
         harness: {} as ToolExecutionContext["harness"],
         sessionId: 1,
         profileKey: "test-profile",
+        agentMode: "normal",
         workspaceRoot: absoluteFsPath(process.cwd()),
         currentProject: null,
     };

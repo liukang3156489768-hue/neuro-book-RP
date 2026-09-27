@@ -36,6 +36,7 @@ import {
 import {defineWorkbenchMigrationStates} from "nbook/shared/storage/workbench-migration";
 import {defineWorkbenchFileTreeExpandedPathsState} from "nbook/shared/storage/workbench-files";
 import {defineWorkbenchWorldEnginePanelSizesState} from "nbook/shared/storage/workbench-world-engine";
+import {defineOutlineWorkbenchState} from "nbook/shared/storage/outline-workbench";
 import {
     defineWorkbenchCreateProjectWindowSizeState,
     defineWorkbenchSettingsWindowSizeState,
@@ -77,6 +78,7 @@ function buildProductStorageStates(): readonly DefinedStorageState<unknown>[] {
         // `nbook.projectCreateDialog.size.v2` 的正式归属，与书架模式同 owner。
         defineWorkbenchSettingsWindowSizeState() as unknown as DefinedStorageState<unknown>,
         defineWorkbenchCreateProjectWindowSizeState() as unknown as DefinedStorageState<unknown>,
+        defineOutlineWorkbenchState() as unknown as DefinedStorageState<unknown>,
     ]);
 }
 
@@ -90,3 +92,4 @@ export function productStorageDefinitions(): readonly DefinedStorageState<unknow
 export function registerProductStorageDefinitions(): void {
     registerStorageStateDefinitions(productStorageDefinitions());
 }
+

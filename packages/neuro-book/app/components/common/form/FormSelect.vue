@@ -4,7 +4,6 @@ import {
     FormSelect as NbFormSelect,
     type FormSelectDirection,
     type FormSelectOption,
-    type FormSelectSize,
 } from "@notnotype/nb-ui/components";
 
 /**
@@ -50,9 +49,22 @@ const emit = defineEmits<{
     (e: "focus", event: FocusEvent): void;
 }>();
 
+// 历史表单用空串表示“未挂章/全部”等可选项；Reka 将空串保留给清空状态，不能作为 Item。
+// 编码只停留在代理边界，业务事件与原生表单提交仍使用原值。
+const emptyOptionValue = computed(() => {
+    let value = "__nbook_empty_option__";
+    while (props.options.some((option) => option.value === value)) {
+        value += "_";
+    }
+    return value;
+});
+const hasEmptyOption = computed(() => props.options.some((option) => option.value === ""));
+const selectOptions = computed(() => props.options.map((option) => option.value === ""
+    ? {...option, value: emptyOptionValue.value}
+    : option));
 const model = computed({
-    get: () => props.modelValue,
-    set: (val: string) => emit("update:modelValue", val),
+    get: () => props.modelValue === "" && hasEmptyOption.value ? emptyOptionValue.value : props.modelValue,
+    set: (value: string) => emit("update:modelValue", value === emptyOptionValue.value ? "" : value),
 });
 </script>
 
@@ -60,9 +72,8 @@ const model = computed({
     <NbFormSelect
         v-bind="attrs"
         v-model="model"
-        :options="options"
+        :options="selectOptions"
         :id="id || undefined"
-        :name="name || undefined"
         :placeholder="placeholder"
         :size="size"
         :dropdown-direction="dropdownDirection"
@@ -71,4 +82,5 @@ const model = computed({
         :hide-checkmark="hideCheckmark"
         @focus="emit('focus', $event)"
     />
+    <input v-if="name" type="hidden" :name="name" :value="modelValue" :disabled="disabled" />
 </template>

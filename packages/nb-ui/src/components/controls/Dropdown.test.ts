@@ -51,6 +51,13 @@ describe("Dropdown", () => {
         }
     });
 
+    it("浮层带 popover 层级：页面里 z-index ≥ 1 的定位元素不能盖住菜单", async () => {
+        const wrapper = mountDropdown({items: [{label: "保存", value: "save"}]});
+        await open(wrapper);
+
+        expect(document.querySelector<HTMLElement>("[role=menu]")?.style.zIndex).toBe("60");
+    });
+
     it("扁平项：分隔线渲染、禁用项不执行、选中项只发 value", async () => {
         const wrapper = mountDropdown({
             items: [

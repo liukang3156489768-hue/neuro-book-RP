@@ -342,6 +342,7 @@ function toolContext(harness: Record<string, unknown>, sessionId = 1): ToolExecu
         } as never,
         sessionId,
         profileKey: "leader.default",
+        agentMode: "normal",
         workspaceRoot,
         currentProject: null,
         invocationId: "parent-invocation",

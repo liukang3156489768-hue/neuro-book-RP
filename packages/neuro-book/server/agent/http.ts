@@ -299,6 +299,7 @@ export function toInvokeInput(
         resolution: body.resolution as InvokeAgentInput["resolution"],
         resolutions: body.resolutions as InvokeAgentInput["resolutions"],
         clientState: body.clientState,
+        requestOptionsPatch: body.temperature === undefined ? undefined : {temperature: body.temperature},
         caller: {kind: "user"},
         block: body.block,
         onEvent,

@@ -6,6 +6,7 @@ import type {ToolSessionWriteSink} from "nbook/server/agent/session/tool-session
 import type {ProfileVariableAccessor} from "nbook/server/agent/variables/types";
 import type {LowCodeFormDto} from "nbook/shared/dto/low-code-form.dto";
 import type {AgentAttachmentCodec} from "nbook/server/agent/attachments/agent-attachment-codec";
+import type {AgentMode} from "nbook/shared/dto/agent-session.dto";
 import type {AbsoluteFsPath} from "nbook/server/runtime/paths/file-path";
 import type {ReadyProjectSessionRef} from "nbook/server/workspace-files/project-session-types";
 
@@ -39,6 +40,8 @@ export type ToolExecutionContext = {
     workspaceRoot: AbsoluteFsPath;
     currentProject: ReadyProjectSessionRef | null;
     invocationId?: string;
+    /** 本次调用的会话工作模式；工具据此区分讨论与自动模式的审批范围。 */
+    agentMode: AgentMode;
     vars?: ProfileVariableAccessor;
     sessionWrites?: ToolSessionWriteSink;
     /** Agent 图片 Codec；内建工具不能绕过完整解码直接写通用 Attachment Store。 */
@@ -92,6 +95,13 @@ export type NeuroAgentTool = {
      * 新增会写文件或写库的工具必须标注，否则只读模式约束不生效。
      */
     mutatesWorkspace?: boolean;
+    /**
+     * 工具自身按会话模式区分审批范围时置位（规划工具：讨论模式逐项审批，自动模式只审批删除）。
+     * 置位后只读模式仍逐项审批，自动模式改由 requiresApproval 决定；未置位时 approvalRequired 表示任何模式都需审批。
+     */
+    approvalConditional?: boolean;
+    /** 自动模式下该次调用是否仍需审批；仅 approvalConditional 工具会被询问，抛错按需要审批处理。 */
+    requiresApproval?: (input: {args: unknown; agentMode: AgentMode}) => boolean;
     /** 为空时使用 parameters 校验；非空时 provider-visible parameters 和执行校验 schema 可以分离。 */
     validationSchema?: TSchema;
     /**

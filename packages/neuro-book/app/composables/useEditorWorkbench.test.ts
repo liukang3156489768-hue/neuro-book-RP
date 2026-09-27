@@ -135,6 +135,19 @@ describe("编辑器编排", () => {
         expect(store.workspaceBuffers["a.md"]?.content).toBe("from new instance");
         expect(workbench.flush("main")).toBe("settled");
     });
+    it("同一实例重复发布同一句柄不重置动作，也不让组呈现失效", async () => {
+        const {store, workbench} = await setup("cancel");
+        const {handle, target} = viewHandle(store);
+        const actions = [{id: "view.action", label: "Action", disabled: false}];
+        workbench.bindViewHandle("main", target, "view", handle);
+        workbench.setActions("main", target, "view", actions);
+        const before = workbench.groups.value;
+        // 宿主每次文档快照变化都会重新发布句柄；判重失败会重置 actions 并形成渲染循环。
+        workbench.bindViewHandle("main", target, "view", handle);
+        workbench.setActions("main", target, "view", actions);
+        expect(workbench.groups.value).toBe(before);
+        expect(workbench.presentationOf("main").actions).toEqual(actions);
+    });
     it("同文档双组各自绑定，回执按实例基线判定", async () => {
         const {store, workbench} = await setup("cancel");
         expect(workbench.splitToEdge({sourceGroupId: "main", targetGroupId: "main", path: "a.md", direction: "right", mode: "copy"})).toBe(true);

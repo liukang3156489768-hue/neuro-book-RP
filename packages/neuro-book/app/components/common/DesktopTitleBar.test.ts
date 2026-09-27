@@ -46,6 +46,8 @@ type Harness = {
     opened: string[];
     activeElement: Ref<Element | null>;
     surfaceActive: {value: boolean};
+    sidebarOpen: {value: boolean};
+    bottomPanelOpen: {value: boolean};
 };
 
 /** 焦点元素：不在元素上时直接失败，别让断言在后面对 undefined 下手。 */
@@ -60,6 +62,8 @@ function mountHost(): Harness {
     const switched: (string | null)[] = [];
     const opened: string[] = [];
     const surfaceActive = ref(true);
+    const sidebarOpen = ref(true);
+    const bottomPanelOpen = ref(false);
     const activeElement = ref<Element | null>(null);
     const editSession = useTitleBarEditTarget({editorActive: () => false, activeElement});
     const registration: WorkbenchChromeRegistration = {
@@ -79,6 +83,14 @@ function mountHost(): Harness {
             switched.push(projectRoot);
         },
         toggleAgentPanel: () => undefined,
+        sidebarOpen: () => sidebarOpen.value,
+        toggleSidebar: () => {
+            sidebarOpen.value = !sidebarOpen.value;
+        },
+        bottomPanelOpen: () => bottomPanelOpen.value,
+        toggleBottomPanel: () => {
+            bottomPanelOpen.value = !bottomPanelOpen.value;
+        },
         invokeMenuCommand: (command: DesktopMenuCommandId) => {
             invoked.push(command);
         },
@@ -93,7 +105,7 @@ function mountHost(): Harness {
         },
     }), {attachTo: document.body});
     mounted.push(wrapper);
-    return {wrapper, invoked, switched, opened, activeElement, surfaceActive};
+    return {wrapper, invoked, switched, opened, activeElement, surfaceActive, sidebarOpen, bottomPanelOpen};
 }
 
 function menuItem(label: string): HTMLElement {
@@ -208,5 +220,25 @@ describe("DesktopTitleBar", () => {
         surfaceActive.value = false;
         await wrapper.vm.$nextTick();
         expect(wrapper.get('[data-titlebar-action="toggle-agent-panel"]').attributes("disabled")).toBeDefined();
+    });
+
+    it("布局按钮的开关与切换都走页面登记，书架态禁用", async () => {
+        const {wrapper, surfaceActive, sidebarOpen, bottomPanelOpen} = mountHost();
+        const sidebar = () => wrapper.get('[data-titlebar-action="toggle-sidebar"]');
+        const panel = () => wrapper.get('[data-titlebar-action="toggle-bottom-panel"]');
+        expect(sidebar().attributes("aria-pressed")).toBe("true");
+        expect(panel().attributes("aria-pressed")).toBe("false");
+
+        await sidebar().trigger("click");
+        await panel().trigger("click");
+        await wrapper.vm.$nextTick();
+        expect([sidebarOpen.value, bottomPanelOpen.value]).toEqual([false, true]);
+        expect(sidebar().attributes("aria-pressed")).toBe("false");
+        expect(panel().attributes("aria-pressed")).toBe("true");
+
+        surfaceActive.value = false;
+        await wrapper.vm.$nextTick();
+        expect(sidebar().attributes("disabled")).toBeDefined();
+        expect(panel().attributes("disabled")).toBeDefined();
     });
 });

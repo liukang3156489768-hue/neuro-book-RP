@@ -175,6 +175,7 @@
 - 指针停住时滚动/尺寸变化仍需重算；正常释放按最终坐标再次验证且只提交最后已显示的同一动作，不允许失效锚点偷偷退化成末尾。外部文件/文本走原生数据交换；内部标签移动不能写 `text/plain` 把路径漏进正文。组件原语不拥有这些业务规则。
 
 #### 13. `Drawer`、`DialogWindow` & `AlertDialog`（浮动窗口与反馈规范）
+- `Dialog` 的 Escape 与 Select/Dropdown 共用 Reka `DismissableLayer` 栈，一次只关闭顶层；Tab 由 `useDialogKeyboardStack` 交给最后打开的模态层。迁移期的旧工作台宿主也接入这两个边界。模态内容的 nb-ui 下拉浮层继承 `NB_Z_INDEX.dialog + 1`，不得落到遮罩下面。
 - **Drawer**：支持 `top` / `bottom` / `left` / `right` 四向滑出，背景采用 80% Scrim + 4px 模糊，右侧默认 380px 大纲与设定抽屉。
   - **DialogWindow**：明确使用非模态 Dialog 语义（`DialogRoot :modal="false"`），不渲染 Overlay、不困住焦点、不锁定窗口外指针或背景滚动；窗口外页面必须继续可交互。
   - 标题、`header` slot 和无标题回退都必须生成 `DialogTitle`；关闭按钮必须有可访问名称。标题一律左对齐，不做居中变体；关闭按钮用 `sm` 尺寸贴右上、不贴窗口圆角。Escape、关闭按钮与 `request-close` 由受控宿主决定最终关闭时机。

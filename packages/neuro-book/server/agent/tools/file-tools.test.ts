@@ -88,6 +88,7 @@ describe("v3 file tools", () => {
             harness,
             sessionId: session.sessionId,
             profileKey: "test.file-tools",
+            agentMode: "normal",
             workspaceRoot: absoluteFsPath(workspaceRoot),
             currentProject: null,
             attachmentCodec: harness.attachmentCodec,

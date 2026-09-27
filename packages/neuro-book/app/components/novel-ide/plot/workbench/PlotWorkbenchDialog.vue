@@ -300,6 +300,7 @@ function toPanelRefs(refs: WorkbenchManualRef[]): PlotThreadPanelRef[] {
     <Dialog
         :model-value="props.modelValue"
         size="full"
+        title="剧本工作台"
         overlay-type="opaque"
         :show-footer="false"
         :close-on-overlay="false"
@@ -312,7 +313,7 @@ function toPanelRefs(refs: WorkbenchManualRef[]): PlotThreadPanelRef[] {
                 <span class="workbench-accent-icon">
                     <span class="i-lucide-pen-line h-4 w-4"></span>
                 </span>
-                <span class="text-[16px] font-semibold text-[var(--text-main)]">剧本工作台</span>
+                <span class="shrink-0 text-[16px] font-semibold text-[var(--text-main)]">剧本工作台</span>
                 <span class="hidden max-w-[200px] truncate text-[13px] text-[var(--text-muted)] md:inline">{{ props.story.title }}</span>
                 <span class="hidden text-[13px] text-[var(--text-muted)] md:inline">›</span>
                 <span class="hidden truncate text-[13px] text-[var(--text-secondary)] md:inline">{{ selectedPhase?.title ?? "未分阶段" }}</span>
@@ -328,7 +329,7 @@ function toPanelRefs(refs: WorkbenchManualRef[]): PlotThreadPanelRef[] {
                     </template>
                 </span>
 
-                <button type="button" class="inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-main)]" @click="emit('update:modelValue', false)">
+                <button type="button" aria-label="关闭剧本工作台" class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-main)]" @click="emit('update:modelValue', false)">
                     <span class="i-lucide-x h-4 w-4"></span>
                 </button>
             </div>
@@ -336,7 +337,7 @@ function toPanelRefs(refs: WorkbenchManualRef[]): PlotThreadPanelRef[] {
 
         <!-- 工作台主体 -->
         <div class="flex min-h-0 flex-1 flex-col overflow-hidden bg-[color-mix(in_srgb,var(--bg-main)_96%,white)]">
-            <nav class="flex h-11 shrink-0 items-center justify-center gap-10 border-b border-[var(--border-color)] bg-[var(--bg-panel)]/88 px-8 text-[12px] font-medium shadow-sm">
+            <nav class="flex h-11 shrink-0 items-center justify-center gap-3 border-b border-[var(--border-color)] bg-[var(--bg-panel)]/88 px-3 text-[12px] font-medium shadow-sm sm:gap-10 sm:px-8">
                 <button
                     v-for="tab in tabs"
                     :key="tab.value"
@@ -351,7 +352,7 @@ function toPanelRefs(refs: WorkbenchManualRef[]): PlotThreadPanelRef[] {
                 </button>
             </nav>
 
-            <div class="relative flex min-h-0 flex-1">
+            <div class="relative flex min-h-0 flex-1 overflow-x-auto">
                 <div v-if="props.error" class="absolute left-1/2 top-[70px] z-20 -translate-x-1/2 rounded-md border border-[var(--status-danger-border)] bg-[var(--status-danger-bg)] px-3 py-2 text-[12px] text-[var(--status-danger)] shadow-sm">
                     {{ props.error }}
                 </div>
@@ -374,6 +375,7 @@ function toPanelRefs(refs: WorkbenchManualRef[]): PlotThreadPanelRef[] {
                     />
 
                     <PlotWorkbenchSceneList
+                        class="min-w-[340px]"
                         :thread="selectedThread"
                         :phase-title="selectedPhase?.title ?? null"
                         :scenes="props.scenes"

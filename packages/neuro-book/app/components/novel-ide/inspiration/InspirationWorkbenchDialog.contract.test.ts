@@ -8,7 +8,6 @@ const composablePath = fileURLToPath(new URL("../../../composables/useInspiratio
 describe("Inspiration workbench entry", () => {
     it("keeps the review-first workflow and all server actions visible in source", async () => {
         const [dialog, composable] = await Promise.all([readFile(dialogPath, "utf8"), readFile(composablePath, "utf8")]);
-        expect(dialog).toContain("DialogWindow");
         expect(dialog).toContain("INSPIRATION_CATEGORIES");
         expect(dialog).toContain("sourcePreview");
         expect(dialog).toContain("保存已审阅成果");

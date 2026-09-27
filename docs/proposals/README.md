@@ -4,6 +4,8 @@
 
 当前活跃提案：
 
+- [`大纲规划模块`](./outline-planning-module.md)：替换《新小说编写计划》中的大纲与细纲部分和伏笔部分，含大纲库、伏笔库、线路规划、伏笔埋入与回收管理，以及模块 Agent 与三个专用子 Agent，状态为 `accepted`。
+
 - [`../packages/neuro-book/docs/proposals/character-workbench.md`](../../packages/neuro-book/docs/proposals/character-workbench.md)：Character 导航、搜索、编辑与 Low-code Form 合同，状态为 `reviewing`。
 - [`Agent Skills 项目化适配`](../../packages/neuro-book/docs/proposals/agent-skills-adaptation.md)：状态为 `accepted`；旧适配流程作为历史保留，当前专项技能与验证分工由 P-005 最新决策取代。
 - [`../packages/neuro-book/docs/proposals/agent-model-execution-surfaces.md`](../../packages/neuro-book/docs/proposals/agent-model-execution-surfaces.md)：Harness Agent、completion 与 headless 三套调用面、Catalog、授权和 Workflow 重放边界，状态为 `accepted`。
@@ -48,3 +50,4 @@
 - 实施前把已批准行为写入[`../specs/README.md`](../specs/README.md)注册的当前规范。Task可引用Proposal并协作准备指定Spec，但只有开发者明确接受的决定可进入`planned`合同。
 - `.agents/works/` 记录 current 一次设计或实现的范围、授权、当前快照和证据链接；Work/Task 引用 Proposal 与 Spec，不复制正文。`.agents/tasks/` 只保存 legacy provenance。
 `rejected`、`superseded` 和已经完成沉淀的 Proposal 移入 [`../packages/neuro-book/docs/archived/`](../../packages/neuro-book/docs/archived/) 下的 proposals 分类；当前规范不依赖归档内容才能被理解。
+

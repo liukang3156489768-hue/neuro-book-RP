@@ -2,6 +2,11 @@
 
 Shared Vue/Nuxt UI primitives for NeuroBook-derived projects.
 
+`Dialog` shares Reka's dismissable-layer stack with selects/menus for Escape and
+keeps their portals above its overlay. Legacy modal hosts can use the same Reka
+primitive and join Tab ownership via `useDialogKeyboardStack` from
+`@notnotype/nb-ui/composables`.
+
 ## Local development
 
 ```bash

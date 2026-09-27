@@ -7,6 +7,7 @@ import {createAssistantTextMessage} from "nbook/server/agent/messages/message-ut
 import {AGENT_TASKS_STATE_KEY} from "nbook/server/agent/session/custom-state-keys";
 import {ToolSessionWriteSink} from "nbook/server/agent/session/tool-session-write-sink";
 import type {SessionWriteExecutor, SessionWritePlan} from "nbook/server/agent/session/write-plan";
+import type {ToolExecutionContext} from "nbook/server/agent/tools/types";
 import {absoluteFsPath} from "nbook/server/runtime/paths/file-path";
 import {JsonlSessionRepository} from "nbook/server/agent/session/session-repo";
 
@@ -35,10 +36,11 @@ describe("task tools", () => {
             profileKey: "leader.default",
             initial: {},
         });
-        const context = {
+        const context: ToolExecutionContext = {
             harness,
             sessionId: created.sessionId,
             profileKey: "leader.default",
+            agentMode: "normal",
             workspaceRoot: absoluteFsPath(workspaceRoot),
             currentProject: null,
         };
@@ -85,10 +87,11 @@ describe("task tools", () => {
         const pendingPlans: Array<{plan: SessionWritePlan; toolCallIndex: number; enqueueOrder: number}> = [];
         let enqueueOrder = 0;
         const snapshotBeforeTurn = await harness.repo.readSession(created.sessionId);
-        const context = {
+        const context: ToolExecutionContext = {
             harness,
             sessionId: created.sessionId,
             profileKey: "leader.default",
+            agentMode: "normal",
             workspaceRoot: absoluteFsPath(workspaceRoot),
             currentProject: null,
             sessionWrites: new ToolSessionWriteSink({

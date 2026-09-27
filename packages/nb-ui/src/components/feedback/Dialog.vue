@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import {computed, getCurrentInstance, nextTick, onBeforeUnmount, onMounted, ref, watch} from "vue";
-import {NB_Z_INDEX} from "../../theme/z-index";
+import {computed, getCurrentInstance, nextTick, onBeforeUnmount, onMounted, provide, ref, watch} from "vue";
+import {NB_POPOVER_Z_INDEX, NB_Z_INDEX} from "../../theme/z-index";
+import {useDialogKeyboardStack} from "../../composables/useDialogKeyboardStack";
 import {getFocusable, trapTabKey} from "../../utils/focus-trap";
 import IconButton from "../controls/IconButton.vue";
 
@@ -221,7 +222,12 @@ function handleOverlayContextMenu(event: MouseEvent): void {
 }
 
 function handleKeydown(event: KeyboardEvent): void {
+    const target = event.target;
+    if (target instanceof Element && target.closest('[role="listbox"], [data-reka-select-content], [data-radix-select-content]')) {
+        return;
+    }
     if (event.key === "Escape" && props.closeOnEsc) {
+        event.preventDefault();
         requestClose("esc");
         return;
     }
@@ -231,9 +237,11 @@ function handleKeydown(event: KeyboardEvent): void {
     }
 }
 
+useDialogKeyboardStack(() => props.modelValue, handleKeydown);
+provide(NB_POPOVER_Z_INDEX, NB_Z_INDEX.dialog + 1);
+
 /** 打开时的副作用：键盘监听、滚动锁、焦点移入面板 */
 function activate(): void {
-    document.addEventListener("keydown", handleKeydown);
     previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     previousBodyOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -258,7 +266,6 @@ function activate(): void {
 
 /** 关闭时的副作用：解除监听与滚动锁、焦点归还触发元素 */
 function deactivate(): void {
-    document.removeEventListener("keydown", handleKeydown);
     panelResizeObserver?.disconnect();
     panelResizeObserver = null;
     scrolledFromTop.value = false;

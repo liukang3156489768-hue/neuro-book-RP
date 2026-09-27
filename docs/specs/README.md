@@ -109,6 +109,7 @@ Code-first 只调整已授权 Task 内的修改顺序，不绕过人类授权、
 | Workbench 命令系统 | [`workbench/commands.md`](workbench/commands.md) | 注册登记、`when` 求值、执行管线、暴露策略与审计；六条首批命令在 Component Lab 闭环，实现与合同测试闭合 |
 | Workbench 快速打开 | [`workbench/quick-open.md`](workbench/quick-open.md) | 单控件两模（命令搜索与行号跳转）、会话 MRU、S4 浮层键盘与焦点交接；实现与 Lab 验收闭合，主页面接入不在本批 |
 | 模型角色与通用模型选择器 | [`ui/model-role-selection.md`](ui/model-role-selection.md) | 梯度轴与专精轴快速选择、通用模型高密度浏览搜索、会话临时覆盖与状态栏联动已由代码与业务集成支持 |
+| Inspiration 设计工作台 | [`ui/inspiration-workbench.md`](ui/inspiration-workbench.md) | 悬浮设计工作台、原创设计、作品分析提取、模板字段解析、聊天草稿恢复与候选审阅保存 |
 
 ## 待实现规范
 以下已获批准但尚未实现的目标合同必须在代码切换前满足；实现和验证闭合后原地晋升为 `implemented`。
@@ -128,6 +129,12 @@ Code-first 只调整已授权 Task 内的修改顺序，不绕过人类授权、
 | Storage 架构边界 | [`storage/boundaries.md`](storage/boundaries.md) | Config / Storage / 内存 / 领域数据职责、user/project 归属、插件与 grid 消费边界 |
 | Storage 本地持久化 | [`storage/persistence.md`](storage/persistence.md) | 身份与客户端分区、条件读写、生命周期、恢复、备份与首批迁移；运行时与验收尚未实现 |
 | 工作台与插件嵌套 grid | [`ui/nested-grid.md`](ui/nested-grid.md) | 二维原语、原子手势、共享测量/宿主、scope仲裁与绝对指针跟随；新矩阵未闭合前保持planned |
+| 大纲库与细纲 | [`outline/planning-library.md`](outline/planning-library.md) | `outline.planning-library`；总纲/卷纲/章节大纲、细纲、方案引用、写时分叉和正式采用；尚未实现 |
+| 伏笔库与标记派生 | [`outline/foreshadowing.md`](outline/foreshadowing.md) | `outline.foreshadowing`；四状态、正式大纲标记、来源追溯和异常；尚未实现 |
+| 线路规划 | [`outline/line-planning.md`](outline/line-planning.md) | `outline.line-planning`；节点图、主线/支线/角色线/IF 线、顺序、重复和冲突门禁；尚未实现 |
+| 大纲规划 Agent | [`outline/agent-assistance.md`](outline/agent-assistance.md) | `outline.agent-assistance`；讨论/自动模式、审批、批量确认、撤销、审计和流式输出；尚未实现 |
+| 大纲规划工作台 UI | [`outline/workbench-ui.md`](outline/workbench-ui.md) | `outline.workbench-ui`；全屏左右分栏、可拖拽宽度、项目布局持久化和三段式视图；尚未实现 |
+| `writer.pro` 规划交接 | [`outline/writer-handoff.md`](outline/writer-handoff.md) | `outline.writer-handoff`；只读正式固定线路，拒绝草稿、失效和重复节点；尚未实现 |
 
 ## 冻结过渡规范
 
@@ -171,3 +178,5 @@ Code-first 只调整已授权 Task 内的修改顺序，不绕过人类授权、
 `bun run docs:check` 只负责确定性结构：元数据、模板占位、必需章节的实义内容、成熟度登记、capability 精确唯一、implemented 证据的「实现入口／合同测试／Smoke」三条标签行及链接类型和活跃相对链接。它不判断自然语言是否互相矛盾、owner 是否真实、两个近义 capability 是否重叠，也不推断代码 diff 是否改变行为。current Work/Task 快照与受管组件文档缺失分别进入 `warnings` 与 `failures`：Task 正文只供协作参考，组件文档缺失阻断发布文档门禁。
 
 Reviewer 必须核对每项输入、输出、状态、副作用和失败语义没有冲突；`planned` 没有泄漏实现步骤且具有真实批准依据；`implemented` 的代码、测试和 smoke 证据覆盖正文；Task 和 PR 链接具体 Spec 或明确说明行为合同未变。两层都通过才算完成。
+
+

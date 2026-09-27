@@ -20,6 +20,8 @@ server/.agent/
 workspace/
 # 例外：主应用源码里同名的视图目录（勿把新文件判为运行期工作区数据）
 !app/components/novel-ide/workspace/
+# 例外：内置 workspace 资产是 canonical 源码；否则新增的内置 Profile 会被静默忽略
+!/assets/workspace/
 
 # Package-local governance and runtime state
 .agent/
@@ -28,6 +30,9 @@ workspace/
 
 # System workspace assets generated during prepare/build
 assets/workspace/.nbook/agent/profiles/.compiled/
+assets/workspace/.nbook/agent/variables/.compiled/
+# llmlint Skill 由 packages/llmlint/skill 投影生成，单一源不在此处
+assets/workspace/.nbook/agent/skills/llmlint/
 assets/workspace/.nbook/agent/variables/.compiled/
 assets/workspace/.nbook/agent/.staging/
 assets/workspace/.nbook/agent/profiles/.system-profile-metadata.json

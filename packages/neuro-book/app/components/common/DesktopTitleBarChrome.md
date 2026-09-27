@@ -21,7 +21,7 @@
 - **DesktopTitleBarMenus**: 系统级菜单栏（File / Edit / View / Help），支持自动自适应降级为紧凑汉堡菜单（`compact`）；
 - **DesktopTitleBarProjectSwitcher**: 包含**直达书架独立按钮**（一键返回书架）与**工程下拉切换器**（对标 FormSelect 视觉规范，同时提供当前标签切换和新标签打开复合动作）；
 - **DesktopTitleBarCommandCenter**: 参考 VS Code 的 Command Center 居中命令搜索胶囊，实时显示当前上下文与快捷键徽标（`Ctrl P` / `⌘P`），点击一键激活 `WorkbenchCommandPalette`；
-- **DesktopTitleBarActions**: 右侧工具栏，包含布局控制工具组（主侧栏/底部面板切换）与 Agent 侧栏开关 + 连接状态指示灯（本地绿 / 远程蓝）；
+- **DesktopTitleBarActions**: 右侧工具栏，包含布局控制工具组（主侧栏/底部面板切换，`aria-pressed` 反映开关，工作面未激活时与 Agent 开关一同禁用）与 Agent 侧栏开关 + 连接状态指示灯（本地绿 / 远程蓝）；
 - **DesktopTitleBarWindowControls**: 46px 满高 Windows 系统绘制自绘窗口控制按钮（最小化 / 最大化 / 关闭）。
 
 ## 数据

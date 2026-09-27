@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import {afterEach, beforeEach, describe, expect, it, vi} from "vitest";
-import {mount, type VueWrapper} from "@vue/test-utils";
+import {DOMWrapper, flushPromises, mount, type VueWrapper} from "@vue/test-utils";
 import FormSelect, {type SelectOption, type SelectSize} from "./FormSelect.vue";
 
 const mounted: VueWrapper[] = [];
 
 beforeEach(() => {
+    Element.prototype.scrollIntoView = vi.fn();
     vi.stubGlobal("ResizeObserver", class {
         observe(): void {}
         unobserve(): void {}
@@ -27,6 +28,37 @@ describe("common/form/FormSelect 代理桥接", () => {
         {label: "选项 B", value: "b"},
         {label: "选项 C (禁用)", value: "c", disabled: true},
     ];
+
+    it("支持空值选项、切回未挂章且不把内部编码写入表单", async () => {
+        const form = document.createElement("form");
+        document.body.append(form);
+        const wrapper = mount(FormSelect, {
+            props: {
+                modelValue: "chapter-1",
+                name: "chapterId",
+                options: [
+                    {label: "未挂章", value: ""},
+                    {label: "重逢", value: "chapter-1"},
+                    {label: "保留真实同名值", value: "__nbook_empty_option__"},
+                ],
+            },
+            attachTo: form,
+        });
+        mounted.push(wrapper);
+        await wrapper.get("button").trigger("keydown", {key: "ArrowDown"});
+        await flushPromises();
+        const emptyOption = [...document.querySelectorAll<HTMLElement>('[role="option"]')]
+            .find((option) => option.textContent?.includes("未挂章"));
+        expect(emptyOption).toBeDefined();
+        await new DOMWrapper(emptyOption!).trigger("keydown", {key: "Enter"});
+        expect(wrapper.emitted("update:modelValue")?.at(-1)).toEqual([""]);
+        await wrapper.setProps({modelValue: ""});
+        expect(wrapper.get("button").text()).toContain("未挂章");
+        expect(new FormData(form).getAll("chapterId")).toEqual([""]);
+        await wrapper.setProps({modelValue: "__nbook_empty_option__"});
+        expect(wrapper.get("button").text()).toContain("保留真实同名值");
+        expect(new FormData(form).get("chapterId")).toBe("__nbook_empty_option__");
+    });
 
     it("正确渲染选中项文本并传递 props", () => {
         const wrapper = mount(FormSelect, {

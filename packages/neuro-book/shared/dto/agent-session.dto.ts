@@ -100,6 +100,8 @@ export const AgentInvokeRequestDtoSchema = z.object({
     resolution: AgentResolutionDtoSchema.optional(),
     resolutions: z.array(AgentResolutionDtoSchema).optional(),
     clientState: z.lazy(() => ClientVariablesDtoSchema).optional(),
+    /** 仅覆盖本次 invocation 的 provider temperature，不写入 session；会话级设置由调用方每次携带。 */
+    temperature: z.number().min(0).max(2).optional(),
     caller: z.never().optional(),
     block: z.boolean().optional(),
 }).strict().superRefine((value, ctx) => {
@@ -753,6 +755,15 @@ export type AgentSessionControlEvent =
         type: "invocation_aborted";
         /** 有界公开预览；完整原因可保留在内部 invocation lifecycle。 */
         reason?: string;
+    }
+    | {
+        type: "outline.operation.previewed" | "outline.operation.approval_required" | "outline.operation.applied" | "outline.operation.partial" | "outline.operation.failed" | "outline.operation.undo_conflict";
+        operationId: string;
+        phase: "preview" | "apply" | "undo";
+        result: "previewed" | "applied" | "failed" | "partial" | "undone";
+        targetIds: string[];
+        transactionId?: string;
+        error?: string;
     }
     | {
         type: "client_variable_patch_requested";

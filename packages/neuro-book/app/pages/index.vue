@@ -15,6 +15,8 @@ import NovelIdeProfileDialog from "nbook/app/components/novel-ide/NovelIdeProfil
 import NovelIdeSettingsDialog from "nbook/app/components/novel-ide/NovelIdeSettingsDialog.vue";
 import WorldEngineWorkbenchDialog from "nbook/app/components/novel-ide/world-engine/WorldEngineWorkbenchDialog.vue";
 import InspirationWorkbenchDialog from "nbook/app/components/novel-ide/inspiration/InspirationWorkbenchDialog.vue";
+import OutlineWorkbenchDialog from "nbook/app/components/novel-ide/outline/OutlineWorkbenchDialog.vue";
+import NovelPlotPanel from "nbook/app/components/novel-ide/plot/NovelPlotPanel.vue";
 import NovelPromptBar from "nbook/app/components/novel-ide/NovelPromptBar.vue";
 import type {AgentSessionModelDraft} from "nbook/app/components/novel-ide/agent/agent-session-model-controls";
 import ProjectPickerScreen from "nbook/app/components/novel-ide/ProjectPickerScreen.vue";
@@ -53,11 +55,12 @@ import {
     type WorkbenchToolRevealPort,
 } from "nbook/app/utils/workbench/tool-reveal-port";
 import {useEditorSessionStorage} from "nbook/app/utils/editor-workbench/editor-session-storage";
-import type {ShellDragCollapseMap} from "nbook/app/utils/workbench/layout";
+import {SHELL_STATUSBAR_HEIGHT, SHELL_TITLEBAR_HEIGHT, type ShellDragCollapseMap} from "nbook/app/utils/workbench/layout";
 import type {WorkbenchLayoutSurface} from "nbook/app/utils/workbench/layout-session";
 import type {WorkbenchContext} from "nbook/app/utils/workbench/descriptors";
 import type {WorkbenchPanelPreferences} from "nbook/app/utils/workbench/panel-state";
 import {
+    isSidebarExplicitlyHidden,
     isToolPartId,
     toolPartOfLocation,
     TOOL_PART_IDS,
@@ -148,6 +151,9 @@ const agentPanelOpen = ref(false);
 const historyInboxRefreshKey = ref(0);
 const worldEngineWorkbenchOpen = ref(false);
 const inspirationWorkbenchOpen = ref(false);
+const outlineWorkbenchOpen = ref(false);
+/** 剧本工作台复用剧情面板的数据编排；宿主按需挂载，避免活动栏点击时组件尚未存在。 */
+const plotWorkbenchHostMounted = ref(false);
 const worldEngineWorkbenchHasUnsavedDrafts = ref(false);
 const worldEngineWorkbenchSaving = ref(false);
 const profileWorkbenchOpen = ref(false);
@@ -557,6 +563,18 @@ async function togglePanelVisibility(): Promise<void> {
     await handlePanelState({hidden: true});
 }
 
+/** 主侧栏的显式隐藏（`hiddenSidebars.left`）：外壳据此把 left 叶移出布局，不留恢复边界。 */
+const leftSidebarHidden = computed(() => isSidebarExplicitlyHidden(viewPlacements.record.value, "left"));
+const rightSidebarHidden = computed(() => isSidebarExplicitlyHidden(viewPlacements.record.value, "right"));
+/** 标题栏按钮的"开"只认用户偏好：显式隐藏与拖到零都算关，再点一次两者一起清掉恢复原宽度。 */
+const leftSidebarOpen = computed(() => !leftSidebarHidden.value && dragCollapsedParts.value.left !== true);
+async function toggleLeftSidebar(): Promise<void> {
+    const outcome = await viewPlacements.setPartVisibility(leftSidebarOpen.value
+        ? {partId: "left", hidden: true}
+        : {partId: "left", hidden: false, dragCollapsed: false});
+    reportPlacementOutcome(outcome, "ide.workbench.container.visibilityRejected");
+}
+
 /**
  * 工具视图焦点（Agent 客户端上下文的工具上下文来源，**非持久**）。
  *
@@ -570,6 +588,8 @@ const unavailableToolParts = computed<readonly ToolPartId[]>(() => {
         parts.add("left");
         parts.add("right");
     }
+    if (leftSidebarHidden.value) parts.add("left");
+    if (rightSidebarHidden.value) parts.add("right");
     if (panelPreferences.value.hidden || panelPreferences.value.collapsed) {
         // 显式隐藏与菜单 32px 收起都只剩（或没有）标签头，容器内容不在屏幕上。
         parts.add("panel");
@@ -763,12 +783,13 @@ const workbenchShellRef = ref<InstanceType<typeof WorkbenchShell> | null>(null);
 /**
  * 叶的显隐都由页面事实驱动，走外壳暴露的 `setLeafVisible`：
  * - `titlebar` **两种宿主都显示**：浏览器没有 bridge 也要有可用标题栏（菜单按真实能力裁剪）；
- * - `left` / `right` 在书架（picker）态收起，主区整个让给书架视图——与接入前「图标条 + 书架」等价。
+ * - `left` / `right` 在书架（picker）态收起，主区整个让给书架视图——与接入前「图标条 + 书架」等价；
+ *   用户显式隐藏（`hiddenSidebars`）同样移出布局，两者任一成立即隐藏。
  */
-watch([workbenchShellRef, projectPickerActive], ([shell, pickerActive]) => {
+watch([workbenchShellRef, projectPickerActive, leftSidebarHidden, rightSidebarHidden], ([shell, pickerActive, leftHidden, rightHidden]) => {
     if (!shell) return;
-    shell.setLeafVisible("left", !pickerActive);
-    shell.setLeafVisible("right", !pickerActive);
+    shell.setLeafVisible("left", !pickerActive && !leftHidden);
+    shell.setLeafVisible("right", !pickerActive && !rightHidden);
 });
 
 /**
@@ -2433,11 +2454,11 @@ const openWorldEngineWorkbench = (): void => {
 /**
  * 从主 IDE 打开当前 Project 的 Plot 工作台。
  *
- * 只切模式与打开对话框：它不再写「活动左侧页签」——主侧栏显示哪个容器由位置记录决定，
+ * 只切模式并唤起工作台宿主：它不写「活动左侧页签」——主侧栏显示哪个容器由位置记录决定，
  * 一个对话框的开关不该顺手改用户的容器选择。
  */
 const openPlotWorkbench = async (): Promise<void> => {
-    if (isUserAssetsWorkspace.value) {
+    if (isUserAssetsWorkspace.value || !projectSurfaceActive.value) {
         return;
     }
 
@@ -2447,6 +2468,8 @@ const openPlotWorkbench = async (): Promise<void> => {
         });
     }
 
+    plotWorkbenchHostMounted.value = true;
+    await nextTick();
     plotWorkbenchOpen.value = true;
 };
 
@@ -2466,6 +2489,7 @@ const releaseProjectSurface = async (): Promise<void> => {
     stopWorkspaceEvents();
     worldEngineWorkbenchOpen.value = false;
     plotWorkbenchOpen.value = false;
+    plotWorkbenchHostMounted.value = false;
     settingsDialogOpen.value = false;
     traceViewerOpen.value = false;
     historyInboxOpen.value = false;
@@ -3049,6 +3073,10 @@ useWorkbenchChromeRegistration({
     openBookshelf: () => openProjectPicker(),
     switchProject: (projectRoot) => handleSwitchNovel(projectRoot),
     toggleAgentPanel: () => toggleAgentPanel(),
+    sidebarOpen: () => leftSidebarOpen.value,
+    toggleSidebar: () => toggleLeftSidebar(),
+    bottomPanelOpen: () => !panelPreferences.value.hidden,
+    toggleBottomPanel: () => togglePanelVisibility(),
     invokeMenuCommand: (command) => dispatchMenuCommand(command),
     editTarget: () => titleBarEdit.target.value,
     projectUrl: (projectRoot) => router.resolve(projectRoot === null ? "/" : buildProjectRoute(projectRoot)).href,
@@ -3162,6 +3190,7 @@ onBeforeUnmount(() => {
         <div class="relative flex min-w-0 flex-1 flex-col overflow-hidden">
         <WorldEngineWorkbenchDialog v-if="projectSurfaceActive && !isUserAssetsWorkspace" v-model="worldEngineWorkbenchOpen" :project-root="currentProjectRoot" :project-title="displayNovelTitle" :surface="workbenchLayoutSurface" @has-unsaved-drafts-change="worldEngineWorkbenchHasUnsavedDrafts = $event" @saving-change="worldEngineWorkbenchSaving = $event" @open-workspace-path="void openWelcomeWorkspacePath($event)" />
         <InspirationWorkbenchDialog v-if="projectSurfaceActive && !isUserAssetsWorkspace" v-model="inspirationWorkbenchOpen" :project-root="currentProjectRoot" />
+        <OutlineWorkbenchDialog v-if="projectSurfaceActive && !isUserAssetsWorkspace" v-model="outlineWorkbenchOpen" :project-root="currentProjectRoot" :project-title="displayNovelTitle" :surface="workbenchLayoutSurface" />
 
         <!-- 工作台外壳骨架（#192 阶段 1 步骤 2）：四个叶挂的是外壳部件，业务组件暂不挂载（仍在仓库里）。
              left / right 叶已换成容器部件（步骤 5），editor 叶仍是演示占位块。
@@ -3218,10 +3247,12 @@ onBeforeUnmount(() => {
                     :user-assets-mode="isUserAssetsWorkspace"
                     :current-user="currentUser"
                     :inspiration-open="inspirationWorkbenchOpen"
+                    :outline-open="outlineWorkbenchOpen"
                     @open-home="void openProjectPicker()"
                     @open-container="handleOpenContainer"
                     @open-world-engine="openWorldEngineWorkbench"
                     @open-inspiration="inspirationWorkbenchOpen = true"
+                    @open-outline-workbench="outlineWorkbenchOpen = true"
                     @open-plot-workbench="void openPlotWorkbench()"
                     @open-trace-viewer="traceViewerOpen = true"
                     @open-history-inbox="historyInboxOpen = true"
@@ -3426,6 +3457,34 @@ onBeforeUnmount(() => {
             :icon-class="dropOverlay?.iconClass"
         />
         </DragDropProvider>
+
+        <div
+            v-if="agentSurfaceActive"
+            class="fixed right-0 z-[8500] flex min-h-0 min-w-0 flex-col border-l border-[var(--border-color)] bg-[var(--bg-panel)] shadow-xl"
+            :style="{top: `${SHELL_TITLEBAR_HEIGHT}px`, bottom: `${SHELL_STATUSBAR_HEIGHT}px`, width: agentPanelOverlay ? '100vw' : 'min(440px, 100vw)'}"
+        >
+            <AgentChatSurface
+                ref="agentSurfaceRef"
+                class="h-full min-h-0"
+                :active="displayAgentPanelOpen || isAgentMode"
+                layout="drawer"
+                :novel-id="displayNovelIdForAgent || ''"
+                :project-ready-revision="agentProjectReadyRevision"
+                :history-inbox-refresh-key="historyInboxRefreshKey"
+                :selected-file-path="selectedFilePath"
+                :open-reference="(target) => void openWorkspaceReference(target)"
+                @close="closeAgentSurface"
+                @open-history-inbox="historyInboxOpen = true"
+            />
+        </div>
+
+        <!-- 新外壳直接挂载工作台宿主，不创建隐藏的旧侧栏和自动保存详情面板。 -->
+        <NovelPlotPanel
+            v-if="plotWorkbenchHostMounted && projectSurfaceActive"
+            :key="currentProjectRoot"
+            dialog-only
+            @open-world-engine="openWorldEngineWorkbench"
+        />
 
         <NovelIdeSettingsDialog v-model="settingsDialogOpen" />
         <NovelIdeProfileDialog v-model="accountProfileOpen" />

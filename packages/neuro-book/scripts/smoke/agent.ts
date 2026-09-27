@@ -19,7 +19,7 @@ const APPLICATION_ROOT = path.resolve(import.meta.dirname, "../..");
 
 export type AgentSmokeHarness = Pick<
     NeuroAgentHarness,
-    "repo" | "createAgent" | "invokeAgent" | "runCommand" | "drainBackgroundTasks" | "dispose"
+    "repo" | "profiles" | "createAgent" | "invokeAgent" | "runCommand" | "getSessionRecovery" | "drainBackgroundTasks" | "dispose"
 >;
 
 export type AgentSmokeOptions = {

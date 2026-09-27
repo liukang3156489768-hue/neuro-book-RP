@@ -2,6 +2,7 @@ import {Markdown} from "@tiptap/markdown";
 import {StarterKit} from "@tiptap/starter-kit";
 import type {AnyExtension} from "@tiptap/core";
 import {Comment, CommentBlock} from "nbook/app/components/markdown-studio/tiptap/Comment";
+import {ForeshadowMarker} from "nbook/app/components/markdown-studio/tiptap/ForeshadowMarker";
 import {HtmlBlock, HtmlBlockBridge, RawInlineHtml} from "nbook/app/components/markdown-studio/tiptap/HtmlFallback";
 import {HtmlEmbed} from "nbook/app/components/markdown-studio/tiptap/HtmlEmbed";
 import {MarkdownAlign} from "nbook/app/components/markdown-studio/tiptap/MarkdownAlign";
@@ -40,6 +41,7 @@ export function createMarkdownDialectExtensions(options: MarkdownDialectExtensio
         }),
         MarkdownParagraph,
         options.comment ? Comment.configure(options.comment) : Comment,
+        ForeshadowMarker,
         CommentBlock,
         MarkdownRuby,
         MarkdownBilingual,

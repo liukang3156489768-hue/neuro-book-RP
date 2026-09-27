@@ -32,6 +32,8 @@ const title = computed(() => registration.value?.title() || "NeuroBook");
 const currentProjectRoot = computed(() => registration.value?.currentProjectRoot() ?? null);
 const projects = computed(() => registration.value?.projects() ?? []);
 const agentPanelOpen = computed(() => registration.value?.agentPanelOpen() ?? false);
+const sidebarOpen = computed(() => registration.value?.sidebarOpen() ?? false);
+const bottomPanelOpen = computed(() => registration.value?.bottomPanelOpen() ?? false);
 const rendererMenus = computed(() => status.value?.menuPresentation !== "native");
 const customWindowControls = computed(() => status.value?.windowControls === "custom");
 /**
@@ -78,6 +80,17 @@ async function toggleAgentPanel(): Promise<void> {
     await registration.value?.toggleAgentPanel();
 }
 
+/** 书架态两侧栏被环境隐藏，此时切换只会写入看不见的偏好，因此同 Agent 开关一样只在 Project 工作面生效。 */
+async function toggleSidebar(): Promise<void> {
+    if (!capabilities.value.surfaceActive) return;
+    await registration.value?.toggleSidebar();
+}
+
+async function toggleBottomPanel(): Promise<void> {
+    if (!capabilities.value.surfaceActive) return;
+    await registration.value?.toggleBottomPanel();
+}
+
 function windowCommand(command: TitleBarWindowCommand): void {
     void bridge.value?.window(command);
 }
@@ -118,12 +131,16 @@ watch(
         :project-url="projectUrl"
         :agent-panel-available="Boolean(registration)"
         :agent-panel-open="agentPanelOpen"
+        :sidebar-open="sidebarOpen"
+        :bottom-panel-open="bottomPanelOpen"
         :renderer-menus="rendererMenus"
         :custom-window-controls="customWindowControls"
         :connection="status?.connection ?? null"
         @invoke-command="void invoke($event)"
         @select-project="void selectProject($event)"
         @toggle-agent-panel="void toggleAgentPanel()"
+        @toggle-sidebar="void toggleSidebar()"
+        @toggle-bottom-panel="void toggleBottomPanel()"
         @window-command="windowCommand"
         @open-command-palette="handleOpenCommandPalette"
     />
