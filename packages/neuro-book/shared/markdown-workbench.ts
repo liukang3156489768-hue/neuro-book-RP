@@ -11,6 +11,16 @@ export interface MarkdownCommentToken {
     tokens: MarkdownToken[];
 }
 
+export type ForeshadowMarkerAction = "plant" | "reinforce" | "recover";
+
+export interface MarkdownForeshadowMarkerToken {
+    raw: string;
+    marker: string;
+    foreshadowId: string;
+    action: ForeshadowMarkerAction;
+    text: string;
+    tokens: MarkdownToken[];
+}
 export interface MarkdownCommentBlockToken {
     raw: string;
     id: string | null;
@@ -44,6 +54,8 @@ export interface MarkdownAlignToken {
 
 // 行内评论：<comment ...>...</comment>，兼容读旧 <inline-comment>；开闭标签名必须一致
 const COMMENT_INLINE_PATTERN = /^<(comment|inline-comment)(?:\s+([^>]*))?>([\s\S]*?)<\/\1>/;
+// 伏笔结构化标记：注释包围可见文本，编辑器把注释语法隐藏为可视下划线。
+const FORESHADOW_MARKER_PATTERN = /^<!--\s*nb:foreshadow\b([\s\S]*?)-->([\s\S]*?)<!--\s*\/nb:foreshadow\b([\s\S]*?)-->/;
 // 块级评论：开标签独占一行，闭标签独立成行，中间可跨任意段落
 const COMMENT_BLOCK_PATTERN = /^<comment(?:\s+([^>\n]*))?>[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*<\/comment>[ \t]*(?=\r?\n|$)/;
 // 注音：<ruby text="...">正文</ruby>，兼容读标准 HTML 形式 <ruby>正文<rt>注音</rt></ruby>
@@ -236,6 +248,33 @@ export function renderMarkdownCommentInline(attrs: {id?: string | null; body?: s
 /**
  * 解析块级评论语法。开标签独占一行、闭标签独立成行，内容可跨多个段落。
  */
+/**
+ * 解析章节大纲中的伏笔标记。畸形、嵌套或结束属性越界时返回 null，交给源码兜底，
+ * 避免富文本编辑器把不确定的结构化标记静默改写成普通文本。
+ */
+export function parseMarkdownForeshadowMarker(src: string): MarkdownForeshadowMarkerToken | null {
+    const matched = FORESHADOW_MARKER_PATTERN.exec(src);
+    if (!matched) return null;
+    const opening = parseAttributes(matched[1] ?? "");
+    const closing = parseAttributes(matched[3] ?? "");
+    const marker = opening.marker?.trim() ?? "";
+    const foreshadowId = opening.foreshadow?.trim() ?? "";
+    const action = opening.action?.trim() as ForeshadowMarkerAction | undefined;
+    if (!marker || !foreshadowId || !action || !["plant", "reinforce", "recover"].includes(action)
+        || Object.keys(opening).some((key) => !["marker", "foreshadow", "action"].includes(key))
+        || closing.marker?.trim() !== marker || Object.keys(closing).some((key) => key !== "marker")) {
+        return null;
+    }
+    return {raw: matched[0], marker, foreshadowId, action, text: matched[2] ?? "", tokens: []};
+}
+
+/** 将伏笔标记序列化为稳定格式，供富文本 round-trip 使用。 */
+export function renderMarkdownForeshadowMarker(
+    attrs: {marker: string; foreshadowId: string; action: ForeshadowMarkerAction},
+    innerMarkdown: string,
+): string {
+    return `<!-- nb:foreshadow marker="${escapeAttribute(attrs.marker)}" foreshadow="${escapeAttribute(attrs.foreshadowId)}" action="${attrs.action}" -->${innerMarkdown}<!-- /nb:foreshadow marker="${escapeAttribute(attrs.marker)}" -->`;
+}
 export function parseMarkdownCommentBlock(src: string): MarkdownCommentBlockToken | null {
     const matched = COMMENT_BLOCK_PATTERN.exec(src);
     if (!matched) {

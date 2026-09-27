@@ -409,6 +409,7 @@ describe("Agent variable system", () => {
                 harness: null as never,
                 sessionId: snapshot.metadata.sessionId,
                 profileKey: "leader.default",
+                agentMode: "normal",
                 workspaceRoot: absoluteFsPath(root),
                 currentProject: null,
                 vars,
@@ -636,6 +637,7 @@ describe("Agent variable system", () => {
                 harness: null as never,
                 sessionId: snapshot.metadata.sessionId,
                 profileKey: "leader.default",
+                agentMode: "normal",
                 workspaceRoot: absoluteFsPath(root),
                 currentProject: null,
                 vars,
@@ -988,6 +990,7 @@ function readyProject(projectRoot: string): ReadyProjectSessionRef {
             createProjectWorkspaceKey(workspaceRoot, ref),
         ),
         generation: 1,
+        publicId: "test-ready:1",
     });
 }
 

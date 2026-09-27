@@ -4630,6 +4630,65 @@ describe("NeuroAgentHarness", () => {
         expect(privateApprovalExecuted).toBe(true);
     }, 20_000);
 
+    it("批准后的审批工具执行期间不再对外投影为待处理，并立即推送运行态", async () => {
+        let markStarted!: () => void;
+        const started = new Promise<void>((resolve) => { markStarted = resolve; });
+        let release!: () => void;
+        const released = new Promise<void>((resolve) => { release = resolve; });
+        const slowApproval = defineProfileTool({
+            key: "slow_approval",
+            name: "slow_approval",
+            label: "Slow Approval",
+            description: "Approval-gated tool that runs long after approval, like a delegated sub-agent.",
+            approvalRequired: true,
+            parameters: Type.Object({}),
+            async executeWithContext() {
+                markStarted();
+                await released;
+                return {content: [{type: "text", text: "slow approval executed"}], details: {}};
+            },
+        });
+        harness.profiles.register(defineAgentProfile({
+            manifest: {key: "test.slow-approval", name: "Slow Approval"},
+            initialSchema: Type.Object({}),
+            tools: toolset(slowApproval, builtin.result.main()),
+            prepare() {
+                return {};
+            },
+        }), false);
+        faux.setResponses([
+            fauxAssistantMessage([fauxToolCall("slow_approval", {}, {id: "slow-approval-call"})], {stopReason: "toolUse"}),
+            fauxAssistantMessage([fauxToolCall("report_result", {result: "slow done"}, {id: "slow-report"})], {stopReason: "toolUse"}),
+        ]);
+        const created = await harness.createAgent({profileKey: "test.slow-approval", initial: {}});
+        const waiting = await harness.invokeAgent({sessionId: created.sessionId, mode: "prompt", message: {text: "run"}});
+        expect(waiting.status).toBe("waiting");
+        expect((await harness.getSessionLiveState(created.sessionId)).pendingUserInputs).toHaveLength(1);
+
+        const publish = vi.spyOn(harness.eventHub, "publish");
+        const continued = harness.invokeAgent({
+            sessionId: created.sessionId,
+            mode: "continue",
+            resolution: {kind: "tool_approval", toolCallId: "slow-approval-call", approved: true, resultText: "Approved."},
+        });
+        await started;
+
+        const live = await harness.getSessionLiveState(created.sessionId);
+        expect(live.pendingUserInputs).toEqual([]);
+        expect(live.activeInvocation?.status).toBe("running");
+        expect((await harness.getSessionRecovery(created.sessionId)).pendingUserInputs).toEqual([]);
+        const pushedStates = publish.mock.calls
+            .map(([event]) => event.kind === "session" && event.event.type === "session_state_changed" ? event.event.state : null)
+            .filter((state) => state !== null);
+        expect(pushedStates.some((state) => state.pendingUserInputs.length === 0 && state.activeInvocation?.status === "running")).toBe(true);
+
+        release();
+        const result = await continued;
+        expect(result.status).toBe("completed");
+        expect(result.reportResult?.result).toBe("slow done");
+        expect((await harness.getSessionLiveState(created.sessionId)).pendingUserInputs).toEqual([]);
+    }, 20_000);
+
     it("主 run 可见 profile 最大工具 schema，但执行权限使用 mainRunAllowedToolKeys", async () => {
         const observedToolNames: string[][] = [];
         let mainForbiddenExecuted = false;

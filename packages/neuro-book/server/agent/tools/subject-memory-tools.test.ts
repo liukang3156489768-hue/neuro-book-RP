@@ -110,6 +110,7 @@ describe("subject memory tools", () => {
             harness,
             sessionId: session.sessionId,
             profileKey: "test.subject-memory-tools",
+            agentMode: "normal",
             workspaceRoot: absoluteFsPath(workspaceRoot),
             currentProject: invocationReady,
             invocationId: "subject-memory-tools-test-invocation",

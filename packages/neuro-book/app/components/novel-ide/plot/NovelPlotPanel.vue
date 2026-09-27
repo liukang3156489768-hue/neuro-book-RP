@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import {computed, ref, watch} from "vue";
+import {computed, onBeforeUnmount, ref, watch} from "vue";
 import {storeToRefs} from "pinia";
-import Dialog from "nbook/app/components/common/Dialog.vue";
+import {Dialog} from "@notnotype/nb-ui/components";
 import ContextMenu, {type ContextMenuItem} from "nbook/app/components/common/ContextMenu.vue";
 import PlotThreadDetailPanel from "nbook/app/components/novel-ide/plot/thread-panel/PlotThreadDetailPanel.vue";
 import PlotThreadEditorDialog from "nbook/app/components/novel-ide/plot/thread-panel/PlotThreadEditorDialog.vue";
@@ -47,6 +47,8 @@ import type {
 
 const toneCycle: PlotThreadTone[] = ["amber", "sky", "emerald", "rose"];
 
+const props = withDefaults(defineProps<{dialogOnly?: boolean}>(), {dialogOnly: false});
+
 const novelIdeStore = useNovelIdeStore();
 const {
     currentProjectRoot,
@@ -63,6 +65,8 @@ const {
 const emit = defineEmits<{
     (e: "openWorldEngine"): void;
 }>();
+
+const {t} = useI18n();
 
 const threads = ref<PlotThreadPanelThread[]>([]);
 const scenes = ref<PlotThreadPanelScene[]>([]);
@@ -145,6 +149,18 @@ function createEmptyWorldAnchor(): StorySceneWorldAnchorDto {
 
 let treeRequestVersion = 0;
 let workbenchRequestVersion = 0;
+let projectSessionVersion = 0;
+
+function invalidateProjectReads(): void {
+    projectSessionVersion += 1;
+    treeRequestVersion += 1;
+    workbenchRequestVersion += 1;
+    loadingTree.value = false;
+    loadingWorkbench.value = false;
+    loadingDetail.value = false;
+}
+
+onBeforeUnmount(invalidateProjectReads);
 
 /**
  * 当前章节列表，来自承载树 StoryChapter 实体(经剧情树填充)。
@@ -844,7 +860,8 @@ async function saveChapter(payload: PlotChapterEditorSave): Promise<void> {
 /**
  * 拉取剧本工作台聚合数据。
  */
-async function loadPlotWorkbench(force = false): Promise<void> {    if (!currentProjectRoot.value) {
+async function loadPlotWorkbench(force = false): Promise<void> {
+    if (!currentProjectRoot.value) {
         plotWorkbenchData.value = null;
         workbenchError.value = "";
         return;
@@ -885,10 +902,13 @@ async function ensureThreadDetail(threadId: string, force = false): Promise<void
         return;
     }
 
+    const sessionVersion = projectSessionVersion;
     try {
         const detail = await $fetch<StoryThreadDetailDto>(`/api/projects/plot/threads/${threadId}`, projectPlotOptions());
+        if (sessionVersion !== projectSessionVersion) return;
         applyThreadDetail(detail);
     } catch (error) {
+        if (sessionVersion !== projectSessionVersion) return;
         detailError.value = resolveErrorMessage(error, "加载 Thread 详情失败");
     }
 }
@@ -901,16 +921,19 @@ async function ensureSceneDetail(sceneId: string, force = false): Promise<void> 
         return;
     }
 
+    const sessionVersion = projectSessionVersion;
     loadingDetail.value = true;
     detailError.value = "";
 
     try {
         const detail = await $fetch<StorySceneDetailDto>(`/api/projects/plot/scenes/${sceneId}`, projectPlotOptions());
+        if (sessionVersion !== projectSessionVersion) return;
         applySceneDetail(detail);
     } catch (error) {
+        if (sessionVersion !== projectSessionVersion) return;
         detailError.value = resolveErrorMessage(error, "加载 Scene 详情失败");
     } finally {
-        loadingDetail.value = false;
+        if (sessionVersion === projectSessionVersion) loadingDetail.value = false;
     }
 }
 
@@ -931,15 +954,18 @@ async function preloadThreadScenes(threadId: string): Promise<void> {
         return;
     }
 
+    const sessionVersion = projectSessionVersion;
     try {
         const details = await Promise.all(missingSceneIds.map((sceneId) => (
             $fetch<StorySceneDetailDto>(`/api/projects/plot/scenes/${sceneId}`, projectPlotOptions())
         )));
 
+        if (sessionVersion !== projectSessionVersion) return;
         for (const detail of details) {
             applySceneDetail(detail);
         }
     } catch (error) {
+        if (sessionVersion !== projectSessionVersion) return;
         detailError.value = resolveErrorMessage(error, "预加载 Scene 详情失败");
     }
 }
@@ -1655,6 +1681,8 @@ watch(() => ({
     novelId: currentProjectRoot.value,
     workspaceLoading: loadingWorkspace.value,
 }), async ({novelId, workspaceLoading}, previousState) => {
+    invalidateProjectReads();
+    const sessionVersion = projectSessionVersion;
     const isInitialMount = previousState === undefined;
     closeContextMenu();
     deleteTarget.value = null;
@@ -1681,7 +1709,7 @@ watch(() => ({
     }
 
     await loadPlotTree();
-    if (plotWorkbenchOpen.value) {
+    if (sessionVersion === projectSessionVersion && plotWorkbenchOpen.value) {
         void loadPlotWorkbench(true);
     }
 }, {immediate: true});
@@ -1706,7 +1734,7 @@ watch(plotRefreshVersion, async (version, previousVersion) => {
 </script>
 
 <template>
-    <div class="flex h-full min-h-0 flex-col">
+    <div v-if="!props.dialogOnly" class="flex h-full min-h-0 flex-col">
         <!-- 错误提示 -->
         <div v-if="treeError" class="border-b border-[var(--status-danger-border)] bg-[var(--status-danger-bg)] px-3 py-2 text-[11px] text-[var(--status-danger)]">
             <div class="flex items-center justify-between gap-3">
@@ -1841,6 +1869,8 @@ watch(plotRefreshVersion, async (version, previousVersion) => {
             </template>
         </div>
 
+    </div>
+
         <ContextMenu
             :visible="contextMenuVisible"
             :x="contextMenuX"
@@ -1863,7 +1893,7 @@ watch(plotRefreshVersion, async (version, previousVersion) => {
             :scene-promise-beats="selectedScenePromiseBeats"
             :pinned-thread-ids="pinnedWorkbenchThreadIds"
             :loading="loadingWorkbench"
-            :error="workbenchError"
+            :error="workbenchError || treeError || detailError"
             @select-thread="selectThread"
             @select-scene="selectScene"
             @planning-mutated="handlePlanningMutated"
@@ -1911,7 +1941,9 @@ watch(plotRefreshVersion, async (version, previousVersion) => {
             title="新建卷"
             width="440px"
             show-cancel
+            closable
             overlay-type="opaque"
+            teleport-target=".novel-ide-theme"
             :busy="savingAct"
             @request-close="actDialogVisible = false"
             @update:model-value="actDialogVisible = $event"
@@ -1941,11 +1973,13 @@ watch(plotRefreshVersion, async (version, previousVersion) => {
             title="删除确认"
             width="420px"
             show-cancel
+            closable
+            :confirm-label="t('common.confirm')"
             overlay-type="opaque"
+            teleport-target=".novel-ide-theme"
             @update:model-value="deleteTarget = null"
             @confirm="confirmDelete"
         >
             <div class="text-sm leading-6 text-[var(--text-secondary)]">{{ deleteMessage }}</div>
         </Dialog>
-    </div>
 </template>

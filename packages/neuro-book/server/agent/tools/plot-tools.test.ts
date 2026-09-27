@@ -566,6 +566,7 @@ function testContext(harness: NeuroAgentHarness, profileKey = "leader.default"):
         harness,
         sessionId: 1,
         profileKey,
+        agentMode: "normal",
         workspaceRoot: absoluteFsPath(testHostPath("plot-tools-test")),
         currentProject: currentReady,
         invocationId: "plot-tools-test-invocation",

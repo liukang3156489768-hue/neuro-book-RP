@@ -1,4 +1,7 @@
 import {createFileTools} from "nbook/server/agent/tools/file-tools";
+import {createPlanningTools, createSpecialistPlanningTools} from "nbook/server/agent/tools/planning-tools";
+import {createPlanningDelegationTool, createPlanningSpecialistTool} from "nbook/server/agent/tools/planning-specialist-tool";
+import {createLorebookFileTools} from "nbook/server/agent/tools/lorebook-file-tools";
 import {createPlotTools} from "nbook/server/agent/tools/plot-tools";
 import {createSqlTool} from "nbook/server/agent/tools/sql-tool";
 import {createSubjectMemoryTools} from "nbook/server/agent/tools/subject-memory-tools";
@@ -17,6 +20,9 @@ export {agentCollaborationTools} from "nbook/server/agent/tools/agent-collaborat
 export {controlTools, createReportResultTool, ReportResultSchema} from "nbook/server/agent/tools/control-tools";
 
 function buildAgentTools() {
+    const planningTools = definitionsByKey(createPlanningTools());
+    const specialistPlanningTools = definitionsByKey(createSpecialistPlanningTools());
+    const lorebookFileTools = definitionsByKey(createLorebookFileTools());
     const fileTools = definitionsByKey(createFileTools());
     const taskTools = definitionsByKey(createTaskTools());
     const plotTools = definitionsByKey(createPlotTools());
@@ -41,6 +47,17 @@ function buildAgentTools() {
         getSceneWorldContext: requireDefinition(plotTools, "get_scene_world_context"),
         getStoryChapter: requireDefinition(plotTools, "get_story_chapter"),
         getChapterWriterBrief: requireDefinition(plotTools, "get_chapter_writer_brief"),
+        getPlanningContext: requireDefinition(planningTools, "get_planning_context"),
+        getForeshadowingContext: requireDefinition(planningTools, "get_foreshadowing_context"),
+        suggestForeshadowingMarker: requireDefinition(planningTools, "suggest_foreshadowing_marker"),
+        previewPlanningChange: requireDefinition(planningTools, "preview_planning_change"),
+        applyPlanningChange: requireDefinition(planningTools, "apply_planning_change"),
+        undoPlanningChange: requireDefinition(planningTools, "undo_planning_change"),
+        consultPlanningSpecialist: defineAgentToolFromRuntime(createPlanningSpecialistTool()),
+        delegatePlanningTask: defineAgentToolFromRuntime(createPlanningDelegationTool()),
+        commitPlanningChange: requireDefinition(specialistPlanningTools, "commit_planning_change"),
+        writeLorebook: requireDefinition(lorebookFileTools, "write_lorebook"),
+        editLorebook: requireDefinition(lorebookFileTools, "edit_lorebook"),
         getStoryPromise: requireDefinition(plotTools, "get_story_promise"),
         getStoryDecision: requireDefinition(plotTools, "get_story_decision"),
         saveStoryAct: requireDefinition(plotTools, "save_story_act"),
@@ -92,3 +109,4 @@ function requireDefinition<const TKey extends string>(definitions: Record<string
     }
     return definition as AgentToolDefinition<TKey>;
 }
+

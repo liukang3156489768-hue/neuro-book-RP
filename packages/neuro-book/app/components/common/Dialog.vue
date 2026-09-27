@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { IDE_THEME_HOST_CLASS } from "nbook/app/utils/theme/theme-tokens";
-import {computed, getCurrentInstance, onBeforeUnmount, onMounted, ref, watch} from "vue";
+import {NB_POPOVER_Z_INDEX, NB_Z_INDEX} from "@notnotype/nb-ui/theme";
+import {useDialogKeyboardStack} from "@notnotype/nb-ui/composables";
+import { THEME_HOST_SELECTOR } from "nbook/app/utils/theme/host";
+import {computed, getCurrentInstance, onBeforeUnmount, onMounted, provide, ref} from "vue";
 /**
  * 通用对话框组件。
  *
@@ -38,14 +40,21 @@ const DIALOG_SIZE_PRESETS: Record<DialogSize, DialogSizePreset> = {
         height: "auto",
         maxHeight: "calc(100vh - 32px)",
     },
+    /*
+     * xl / full 是「大工作台」两档。几何必须同时带像素上限与视口内缩：
+     * - 上限防止超宽屏把对话框拉成整片墙；
+     * - 内缩留出页头 / 窗口圆角，尤其桌面壳顶部有 36px 标题栏，纵向内缩不得小于它。
+     * 数值按真实工作台的最小可用面积定：full 要撑开三栏（侧栏 + 主区 + 检查器），
+     * xl 要撑开双栏 + 详情。
+     */
     xl: {
-        width: "min(960px, calc(100vw - 48px))",
-        height: "min(600px, calc(100dvh - 80px))",
+        width: "min(1200px, calc(100vw - 48px))",
+        height: "min(840px, calc(100dvh - 80px))",
         maxHeight: "calc(100dvh - 80px)",
     },
     full: {
-        width: "min(1120px, calc(100vw - 48px))",
-        height: "min(640px, calc(100dvh - 80px))",
+        width: "min(1600px, calc(100vw - 48px))",
+        height: "min(1080px, calc(100dvh - 80px))",
         maxHeight: "calc(100dvh - 80px)",
     },
 };
@@ -92,7 +101,7 @@ const props = withDefaults(defineProps<{
     showHeader: true,
     closeOnOverlay: true,
     closeOnEsc: true,
-    teleportTarget: `.${IDE_THEME_HOST_CLASS}`,
+    teleportTarget: THEME_HOST_SELECTOR,
     overlayType: "opaque",
     showCancel: false,
     showFooter: true,
@@ -197,27 +206,18 @@ const handleOverlayContextMenu = (event: MouseEvent): void => {
  * 监听键盘 Esc。
  */
 const handleKeydown = (event: KeyboardEvent): void => {
+    const target = event.target;
+    if (target instanceof Element && target.closest('[role="listbox"], [data-reka-select-content], [data-radix-select-content]')) {
+        return;
+    }
     if (event.key === "Escape" && props.closeOnEsc) {
+        event.preventDefault();
         requestClose("esc");
     }
 };
-
-watch(() => props.modelValue, (visible) => {
-    if (!import.meta.client) {
-        return;
-    }
-
-    if (visible) {
-        document.addEventListener("keydown", handleKeydown);
-    } else {
-        document.removeEventListener("keydown", handleKeydown);
-    }
-});
+useDialogKeyboardStack(() => props.modelValue, handleKeydown);
 
 onBeforeUnmount(() => {
-    if (import.meta.client) {
-        document.removeEventListener("keydown", handleKeydown);
-    }
     overlayPointerButton.value = null;
 });
 
@@ -230,6 +230,15 @@ const resolvedMaxHeight = computed(() => props.maxHeight ?? resolvedSizePreset.v
 onMounted(() => {
     isMounted.value = true;
 });
+
+/*
+ * 对话框里的 nb-ui 浮层（下拉、气泡）要压在遮罩之上。
+ *
+ * nb-ui 的浮层默认 teleport 到 body 并取注入的层级，缺省只有 60；本对话框的遮罩是 z-9000，
+ * 于是浮层会被自己的遮罩盖住——看得见、点不到。旧 app FormSelect 没这个问题，因为它的
+ * 面板内联在对话框子树里（z-9200）。这里把注入值抬到遮罩之上，所有 nb-ui 浮层一起生效。
+ */
+provide(NB_POPOVER_Z_INDEX, NB_Z_INDEX.dialog + 1);
 </script>
 
 <template>
@@ -242,13 +251,16 @@ onMounted(() => {
             ]" @pointerdown.self="handleOverlayPointerDown" @pointerup.self="handleOverlayPointerUp" @contextmenu.self="handleOverlayContextMenu">
                 <!-- 对话框主体 -->
                 <div
+                    role="dialog"
+                    aria-modal="true"
+                    :aria-label="props.title || undefined"
                     class="nb-dialog-surface flex flex-col overflow-hidden rounded-lg border border-[var(--border-color)] bg-[var(--bg-panel)] text-[var(--text-main)] transform"
                     :data-dialog-size="props.size"
                     data-dialog-surface
                     :style="{ width: resolvedWidth, height: resolvedHeight, maxHeight: resolvedMaxHeight }"
                 >
                     <!-- header 区域 -->
-                    <div v-if="props.showHeader" class="flex items-center justify-between px-5 py-2 border-b border-[var(--border-color)]" :class="props.headerClass">
+                    <div v-if="props.showHeader" class="flex min-w-0 shrink-0 items-center justify-between px-5 py-2 border-b border-[var(--border-color)]" :class="props.headerClass">
                         <slot name="header">
                             <div class="flex min-w-0 flex-1 items-center gap-3">
                                 <span class="min-w-0 flex-1 text-base font-semibold text-[var(--text-main)] leading-snug tracking-wide">{{ props.title }}</span>
@@ -261,7 +273,7 @@ onMounted(() => {
                     </div>
 
                     <!-- body 区域 -->
-                    <div class="flex-1 flex flex-col gap-4 overflow-y-auto px-5 py-4 text-[14px] leading-relaxed text-[var(--text-secondary)]" :class="props.bodyClass">
+                    <div class="min-h-0 min-w-0 flex-1 flex flex-col gap-4 overflow-y-auto px-5 py-4 text-[14px] leading-relaxed text-[var(--text-secondary)]" :class="props.bodyClass">
                         <slot />
                     </div>
 

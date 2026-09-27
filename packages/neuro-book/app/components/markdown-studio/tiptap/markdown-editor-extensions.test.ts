@@ -53,6 +53,21 @@ describe("markdown-studio TipTap Markdown extensions", () => {
         expect(JSON.stringify(parsed)).toContain("\"type\":\"comment\"");
     });
 
+    it("伏笔标记保留结构化注释并在编辑器投影为 mark", () => {
+        const manager = createManager();
+        const source = "她看见<!-- nb:foreshadow marker=\"fm-01\" foreshadow=\"fo-clue\" action=\"plant\" -->银纹<!-- /nb:foreshadow marker=\"fm-01\" -->。";
+        const parsed = manager.parse(source);
+        expect(JSON.stringify(parsed)).toContain("\"type\":\"foreshadowMarker\"");
+        expect(manager.serialize(parsed)).toBe(source);
+    });
+
+    it("损坏的伏笔结束标记保留源码，不静默转换为普通 mark", () => {
+        const manager = createManager();
+        const source = "<!-- nb:foreshadow marker=\"fm-01\" foreshadow=\"fo-clue\" action=\"plant\" -->银纹<!-- /nb:foreshadow marker=\"fm-other\" -->";
+        const parsed = manager.parse(source);
+        expect(JSON.stringify(parsed)).not.toContain("\"type\":\"foreshadowMarker\"");
+        expect(manager.serialize(parsed)).toBe(source);
+    });
     it("行内评论不拆散句子，round-trip 输出 canonical <comment>", () => {
         const manager = createManager();
         const source = "她抬头<comment body=\"这里节奏太快\">看了他一眼</comment>。";

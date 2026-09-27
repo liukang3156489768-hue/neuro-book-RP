@@ -146,6 +146,7 @@ async function executeSqlTool(
         harness,
         sessionId: 1,
         profileKey: "leader.default",
+        agentMode: "normal",
         workspaceRoot: resolveRuntimeWorkspaceRoot(),
         currentProject: ready,
         invocationId: "execute-sql-test-invocation",

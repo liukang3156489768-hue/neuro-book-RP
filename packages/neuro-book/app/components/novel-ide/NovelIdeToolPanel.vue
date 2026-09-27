@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {ref, useAttrs} from "vue";
-import Dialog from "nbook/app/components/common/Dialog.vue";
+import {Dialog} from "@notnotype/nb-ui/components";
 import Dropdown from "nbook/app/components/common/Dropdown.vue";
 import Tooltip from "nbook/app/components/common/Tooltip.vue";
 import DiffWorkbenchDialog from "nbook/app/components/common/diff/DiffWorkbenchDialog.vue";
@@ -354,16 +354,16 @@ function handleSyncDiffAction(payload: DiffWorkbenchActionPayload): void {
 <template>
     <!-- 左侧工具窗 -->
     <div class="contents">
-        <aside v-if="activeTab" v-bind="attrs" class="relative z-10 flex shrink-0 flex-col border-r border-[var(--border-color)] bg-[var(--bg-panel)]" :class="isResizing ? 'select-none transition-none' : ''" :style="panelStyle">
+        <aside v-if="activeTab" v-bind="attrs" class="workbench-tool-panel relative z-10 flex shrink-0 flex-col bg-[var(--bg-panel)]" :class="isResizing ? 'select-none transition-none' : ''" :style="panelStyle" :aria-label="displayTitle">
             <!-- 宽度拖拽手柄 -->
             <div ref="resizeHandleRef" class="group absolute -right-1 top-0 z-30 h-full w-2 cursor-col-resize">
                 <div class="ml-0.5 h-full w-[2px] bg-[var(--accent-main)] opacity-0 transition-all duration-150 group-hover:opacity-100" :class="isResizing ? 'opacity-100 shadow-[0_0_0_1px_color-mix(in_srgb,var(--accent-main)_28%,transparent)]' : ''"></div>
             </div>
 
             <div class="shrink-0 border-b border-[var(--border-color)]">
-                <div class="flex h-9 items-center gap-1 border-b border-[var(--border-color)] px-2">
+                <div class="flex h-12 items-center gap-1 border-b border-[var(--border-color)] px-3">
                     <Tooltip :text="t('ide.header.bookshelfTitle')" placement="bottom">
-                        <button type="button" class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-main)]" @click="emit('openHome')">
+                        <button type="button" class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-main)]" :aria-label="t('ide.header.bookshelfTitle')" @click="emit('openHome')">
                             <span class="i-lucide-library h-4 w-4"></span>
                         </button>
                     </Tooltip>
@@ -423,8 +423,8 @@ function handleSyncDiffAction(payload: DiffWorkbenchActionPayload): void {
                             </button>
                         </Tooltip>
                         <Tooltip :text="t('ide.toolPanel.collapsePanel')" placement="bottom">
-                            <button class="rounded-2 p-1 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-main)]" @click="emit('close')">
-                                <span class="i-lucide-minus h-4 w-4"></span>
+                            <button type="button" class="rounded-2 p-1 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-main)]" :aria-label="t('ide.toolPanel.collapsePanel')" @click="emit('close')">
+                                <span class="i-lucide-panel-left-close h-4 w-4"></span>
                             </button>
                         </Tooltip>
                     </div>
@@ -440,12 +440,12 @@ function handleSyncDiffAction(payload: DiffWorkbenchActionPayload): void {
             </div>
         </aside>
 
-        <Dialog v-model="downloadConfirmOpen" :title="t('ide.toolPanel.downloadTitle', {target: downloadTargetLabel})" width="420px" show-cancel :busy="downloadingWorkspace" @confirm="confirmDownloadWorkspace">
+        <Dialog v-model="downloadConfirmOpen" :title="t('ide.toolPanel.downloadTitle', {target: downloadTargetLabel})" width="420px" show-cancel closable :confirm-label="t('common.confirm')" teleport-target=".novel-ide-theme" :busy="downloadingWorkspace" @confirm="confirmDownloadWorkspace">
             <p>{{ t("ide.toolPanel.downloadConfirm", {target: downloadTargetLabel}) }}</p>
             <p v-if="!props.userAssetsMode" class="mt-3 rounded-md border border-[var(--status-warning-border)] bg-[var(--status-warning-bg)] px-3 py-2 text-sm leading-5 text-[var(--status-warning)]">{{ t("ide.toolPanel.downloadProjectHistoryWarning") }}</p>
         </Dialog>
 
-        <Dialog v-model="syncWarningsOpen" :title="t('ide.toolPanel.syncDetailsTitle')" width="620px" :show-footer="false">
+        <Dialog v-model="syncWarningsOpen" :title="t('ide.toolPanel.syncDetailsTitle')" width="620px" :show-footer="false" closable teleport-target=".novel-ide-theme">
             <div class="space-y-3">
                 <p class="m-0 text-sm text-[var(--text-secondary)]">{{ t("ide.toolPanel.syncDetailsDescription") }}</p>
                 <div class="max-h-[52vh] space-y-2 overflow-auto pr-1">
@@ -481,3 +481,17 @@ function handleSyncDiffAction(payload: DiffWorkbenchActionPayload): void {
         />
     </div>
 </template>
+
+<style scoped>
+.workbench-tool-panel {
+    min-width: 0;
+    max-width: 100%;
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+}
+
+.workbench-tool-panel :deep(button:focus-visible) {
+    outline: 2px solid var(--accent-main);
+    outline-offset: -2px;
+}
+</style>

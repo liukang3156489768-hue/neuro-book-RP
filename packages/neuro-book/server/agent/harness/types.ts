@@ -1,4 +1,4 @@
-import type {AgentUserMessageInput, JsonValue, Usage} from "nbook/server/agent/messages/types";
+import type {AgentUserMessageInput, JsonValue, ThinkingLevel, Usage} from "nbook/server/agent/messages/types";
 import type {InvocationErrorInfo, InvocationErrorPhase, SessionEntryId, SessionMetadata} from "nbook/server/agent/session/types";
 import type {AgentResolution} from "nbook/server/agent/tools/types";
 import type {ClientStateSnapshot} from "nbook/server/agent/variables/types";
@@ -52,6 +52,10 @@ export type InvokeAgentInput = {
     payload?: JsonValue;
     /** 仅覆盖本次 invocation 使用的模型；不会写入或修改 session 默认模型。 */
     modelKey?: string;
+    /** 仅覆盖本次 invocation 的思考级别；off 表示关闭思考。 */
+    thinkingLevel?: ThinkingLevel;
+    /** 仅覆盖本次 provider 请求参数，例如 temperature；不会写入 session。 */
+    requestOptionsPatch?: Record<string, JsonValue>;
     /** 可选展示标题；提供时会在 invocation admission 成功后写入目标 session。 */
     title?: string;
     /** 向后兼容：单个 resolution */

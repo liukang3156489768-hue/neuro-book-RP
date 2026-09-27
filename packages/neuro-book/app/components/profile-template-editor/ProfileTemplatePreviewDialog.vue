@@ -8,7 +8,6 @@ import type {
     PreviewVariableItem,
     SelectOption,
 } from "nbook/app/components/profile-template-editor/profile-template-editor-ui";
-import type {IdeTheme} from "nbook/app/utils/theme/theme-tokens";
 import type {
     ProfileTemplateIssueDto,
     ProfileTemplatePreviewMessageDto,
@@ -27,7 +26,6 @@ const props = defineProps<{
     loadingThreads: boolean;
     variableSearch: string;
     filteredRuntimeVariableGroups: PreviewVariableGroup[];
-    theme: IdeTheme;
     isVariableGroupCollapsed: (group: string) => boolean;
     formatVariableSchema: (item: PreviewVariableItem) => string;
     formatVariableValue: (value: unknown) => string;
@@ -46,11 +44,9 @@ const emit = defineEmits<{
 
 <template>
     <!-- Prompt 预览调试弹窗：变量输入与消息列表 -->
-    <Dialog
+    <Dialog size="full"
         :model-value="props.modelValue"
         title="Prompt 预览调试"
-        width="min(1380px, calc(100vw - 48px))"
-        height="min(860px, calc(100vh - 48px))"
         overlay-type="opaque"
         body-class="!gap-0 !overflow-hidden"
         :show-footer="false"
@@ -158,7 +154,7 @@ const emit = defineEmits<{
                     <span>Prompt 消息</span>
                     <span class="ml-auto text-[11px] font-medium text-[var(--text-muted)]">{{ props.previewMessages.length }} 条</span>
                 </div>
-                <ProfilePromptMessageList :messages="props.previewMessages" :loading="props.previewing" :theme="props.theme" />
+                <ProfilePromptMessageList :messages="props.previewMessages" :loading="props.previewing" />
             </section>
         </div>
     </Dialog>

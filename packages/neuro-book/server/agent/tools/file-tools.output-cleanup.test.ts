@@ -148,6 +148,7 @@ function createContext(root: string, onSpawn?: (spec: SpawnJobSpec) => void): To
         harness,
         sessionId: 1,
         profileKey: "test.output-cleanup",
+        agentMode: "normal",
         workspaceRoot: absoluteFsPath(root),
         currentProject: null,
     };

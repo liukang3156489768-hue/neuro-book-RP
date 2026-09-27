@@ -7,12 +7,10 @@ import type {
     DiffWorkbenchDocument,
     DiffWorkbenchMode,
 } from "nbook/app/components/common/diff/diff-workbench.types";
-import type {IdeTheme} from "nbook/app/utils/theme/theme-tokens";
 
 const props = withDefaults(defineProps<{
     modelValue: boolean;
     document: DiffWorkbenchDocument | null;
-    theme?: IdeTheme;
     actions?: DiffWorkbenchAction[];
     availableModes?: DiffWorkbenchMode[];
     initialMode?: DiffWorkbenchMode;
@@ -22,7 +20,6 @@ const props = withDefaults(defineProps<{
     title?: string;
     subtitle?: string;
 }>(), {
-    theme: "sepia",
     actions: () => [
         {id: "cancel", label: "取消"},
         {id: "use-incoming", label: "使用 Incoming"},
@@ -93,11 +90,9 @@ function handleAction(action: DiffWorkbenchAction): void {
 </script>
 
 <template>
-    <Dialog
+    <Dialog size="full"
         :model-value="modelValue"
         :title="title"
-        width="92vw"
-        height="82vh"
         :closable="false"
         :close-on-overlay="false"
         :close-on-esc="false"
@@ -109,7 +104,6 @@ function handleAction(action: DiffWorkbenchAction): void {
             <p v-if="subtitle" class="m-0 text-xs text-[var(--text-muted)]">{{ subtitle }}</p>
             <DiffWorkbench
                 :document="{...document, resultContent}"
-                :theme="theme"
                 :mode="mode"
                 :available-modes="availableModes"
                 :initial-mode="initialMode"
