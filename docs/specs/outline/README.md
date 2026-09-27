@@ -4,6 +4,27 @@
 
 ## 文档列表
 
+### [outline-entry-templates.md](./outline-entry-templates.md)
+**大纲条目内容模板设计**
+
+定义四个层级大纲的内容结构和模板约束：总纲、卷纲、章节大纲、细纲。
+
+**核心内容**：
+- 各层级的职责和定位
+- Body 内容模板（Markdown 结构）
+- 必需和可选字段规则
+- 篇幅建议和约束规则
+- Agent 生成指引
+- 模板校验规则
+
+**关键约束**：
+- 总纲（total）：全局唯一，1000-3000 字，聚焦宏观结构
+- 卷纲（volume）：阶段性规划，800-2000 字，起承转合结构
+- 章节大纲（chapter）：可执行场景，500-1500 字，必需 `materialRefs`/`writingGuidance`/`targetWords`
+- 细纲（detail）：写作指导，需要偏差分析，支持段落级别标注（未来）
+
+**状态**：设计阶段
+
 ### [detail-writing-guide-annotation.md](./detail-writing-guide-annotation.md)
 **细纲写作指导标注系统**
 
