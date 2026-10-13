@@ -240,6 +240,8 @@ describe("nb-ui components", () => {
         const input = wrapper.get("input");
 
         expect(input.classes()).toContain("peer");
+        expect(input.classes()).toContain("checkbox-input");
+        expect(wrapper.get("label").classes()).toContain("relative");
         await input.setValue(true);
         expect(wrapper.emitted("update:modelValue")?.[0]).toEqual([true]);
     });
@@ -986,7 +988,7 @@ describe("nb-ui dialog window", () => {
             await nextTick();
             await nextTick();
 
-            expect(document.querySelector(".nb-ui-menu-surface")?.getAttribute("style")).toContain("z-index: 8991");
+            expect([...document.querySelectorAll<HTMLElement>(".nb-ui-menu-surface")].at(-1)?.getAttribute("style")).toContain("z-index: 8991");
         } finally {
             wrapper.unmount();
         }
@@ -1023,7 +1025,7 @@ describe("nb-ui dialog window", () => {
             await nextTick();
             await nextTick();
 
-            expect(document.querySelector(".nb-ui-menu-surface")?.getAttribute("style")).toContain("z-index: 8993");
+            expect([...document.querySelectorAll<HTMLElement>(".nb-ui-menu-surface")].at(-1)?.getAttribute("style")).toContain("z-index: 8993");
         } finally {
             wrapper.unmount();
         }

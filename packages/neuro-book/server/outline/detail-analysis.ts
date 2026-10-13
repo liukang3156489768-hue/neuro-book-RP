@@ -1,9 +1,10 @@
 import {randomUUID} from "node:crypto";
 import {z} from "zod";
-import {contentHash, pendingReferenceWarnings, serializeEntryMarkdown, type DetailAnalysis, type OutlineId, type PendingReferenceWarning} from "./format";
+import {allEntryReferences, contentHash, pendingReferenceWarnings, serializeEntryMarkdown, type DetailAnalysis, type OutlineId, type OutlineManifest, type PendingReferenceWarning} from "./format";
 import type {PlanningSnapshot} from "./index";
 import {OutlineGenerationError} from "./direction";
 import {OutlineLibraryError, type LibraryChange, prepareDetailAdoption} from "./library";
+import {analyzeDetailStructure, blockingDetailProblems} from "nbook/shared/outline-detail-structure";
 
 const ModelReport = z.object({
     summary: z.string().trim().min(1).max(2000),
@@ -17,6 +18,32 @@ export type DetailResolution = Readonly<{index: number; decision: "resolved" | "
 /** warnings 由程序从细纲参考文件派生，不进入模型报告，也不随正式采用持久化。 */
 export type IssuedDetailReport = Readonly<{entryId: OutlineId; expectedRevision: number; expectedVersion: number; report: DetailAnalysis;
     warnings: readonly PendingReferenceWarning[]}>;
+
+/**
+ * 细纲审阅只依赖上游链：细纲在方案中的挂载、所属章节大纲、卷纲与总纲。
+ * 同章其他细纲、其他章节、方案标题与排序不进入审阅，因此它们变化时已审阅细纲保持有效；
+ * 若审阅提示改为读取链外条目，这里必须同步扩大，否则报告会在依据变化后仍被当作有效。
+ * 返回自细纲起向上的条目 id；挂载链断裂或方案不存在时返回 undefined。
+ */
+export function detailReviewScope(manifest: OutlineManifest, planId: string, detailId: OutlineId):
+    Readonly<{chain: readonly OutlineId[]; hash: string}> | undefined {
+    const plan = manifest.plans.find(({id}) => id === planId);
+    if (!plan) return undefined;
+    const placements = new Map(plan.placements.map((place) => [place.entryId, place]));
+    const refs = new Map(manifest.entries.map((ref) => [ref.id, ref]));
+    const links: {entryId: OutlineId; parentId: OutlineId | null}[] = [];
+    let current = placements.get(detailId);
+    while (current && links.length <= plan.placements.length) {
+        links.push({entryId: current.entryId, parentId: current.parentId});
+        current = current.parentId === null ? undefined : placements.get(current.parentId);
+    }
+    if (links.length === 0 || links.at(-1)!.parentId !== null) return undefined;
+    // 细纲自身内容由报告的 sourceHash 绑定，这里只记录它的挂载位置。
+    const ancestors = links.slice(1).map(({entryId}) => refs.get(entryId));
+    if (ancestors.some((ref) => ref === undefined)) return undefined;
+    return {chain: links.map(({entryId}) => entryId), hash: contentHash(JSON.stringify({planId, links,
+        ancestors: ancestors.map((ref) => ({id: ref!.id, version: ref!.version, contentHash: ref!.contentHash}))}))};
+}
 
 export function detailAnalysisContext(snapshot: PlanningSnapshot, input: DetailAnalysisRequest): {prompt: string; contextHash: string} {
     const plan = snapshot.manifest.plans.find(({id}) => id === input.planId);
@@ -38,21 +65,25 @@ export function detailAnalysisContext(snapshot: PlanningSnapshot, input: DetailA
     if (contentHash(serializeEntryMarkdown(detail.value)) !== detail.contentHash) {
         throw new OutlineLibraryError("细纲文件不是当前规范格式，请先保存一次再分析");
     }
-    if (detail.value.body.length > 16000 || chapter.value.body.length > 16000) {
-        throw new OutlineLibraryError("细纲或章节正文过长，无法完整分析，请先拆分内容");
+    // 结构不完整的细纲采用后写作模块无法切分场景，所以分析和确认都在这里阻断，而不是等到写作时才报错。
+    const blocking = blockingDetailProblems(analyzeDetailStructure(detail.value, {chapterMarkers: new Map(chapter.markers.map(({marker, action}) => [marker, action]))}));
+    if (blocking.length > 0) {
+        throw new OutlineLibraryError(`细纲结构不完整：${blocking.map(({message}) => message).join("；")}`);
     }
-    // 报告只依赖本方案的关系和规范条目；全局 revision 仍单独用于提交 CAS，不能让无关方案撤回报告。
-    const refs = new Map(snapshot.manifest.entries.map((ref) => [ref.id, ref]));
-    const contextHash = contentHash(JSON.stringify({plan, entries: plan.placements.map(({entryId}) => refs.get(entryId))}));
+    const scope = detailReviewScope(snapshot.manifest, plan.id, detail.value.id);
     const entries = new Map(snapshot.entries.map((entry) => [entry.value.id, entry.value]));
-    const planEntries = plan.placements.map((place) => ({parentId: place.parentId,
-        entry: entries.get(place.entryId)}));
-    if (planEntries.some(({entry}) => !entry || entry.body.length > 16_000)
-        || planEntries.reduce((size, {entry}) => size + (entry?.body.length ?? 0), 0) > 60_000) {
-        throw new OutlineLibraryError("方案上下文过长，无法完整分析，请先拆分内容");
+    const upstream = scope?.chain.slice(1).map((id) => entries.get(id));
+    if (!scope || !upstream || upstream.some((entry) => entry === undefined)) {
+        throw new OutlineLibraryError("细纲的上游大纲链不完整，请先修复方案层级");
     }
-    const prompt = JSON.stringify({plan: {title: plan.title, entries: planEntries}, chapter: chapter.value, detail: detail.value});
-    return {prompt, contextHash};
+    if (detail.value.body.length > 16_000 || upstream.some((entry) => entry!.body.length > 16_000)
+        || upstream.reduce((size, entry) => size + entry!.body.length, detail.value.body.length) > 60_000) {
+        throw new OutlineLibraryError("细纲或上游大纲过长，无法完整分析，请先拆分内容");
+    }
+    const volume = upstream.find((entry) => entry!.kind === "volume") ?? null;
+    const total = upstream.find((entry) => entry!.kind === "total") ?? null;
+    const prompt = JSON.stringify({total, volume, chapter: chapter.value, detail: detail.value});
+    return {prompt, contextHash: scope.hash};
 }
 
 /** 模型只产生审阅报告；正式状态必须从另一个有版本门禁的请求进入。 */
@@ -83,7 +114,7 @@ export async function analyzeDetail(
 
 function pendingDetailWarnings(snapshot: PlanningSnapshot, entryId: OutlineId): PendingReferenceWarning[] {
     const detail = snapshot.entries.find(({value}) => value.id === entryId);
-    return detail ? pendingReferenceWarnings(detail.value.id, detail.path, detail.value.references) : [];
+    return detail ? pendingReferenceWarnings(detail.value.id, detail.path, allEntryReferences(detail.value)) : [];
 }
 
 export function confirmDetail(

@@ -18,6 +18,13 @@ describe("sumUsage", () => {
 });
 
 describe("createToolResultFromResult", () => {
+    it("持久化JSON保留嵌套own prototype名称，且不修改对象原型", () => {
+        const original = JSON.parse('{"variables":{"__proto__":"value","constructor":"author"}}');
+        const normalized = normalizeToolResultDetails(original);
+        expect(JSON.stringify(normalized)).toBe(JSON.stringify(original));
+        expect(Object.getPrototypeOf(normalized)).toBe(Object.prototype);
+        expect(Object.hasOwn({}, "value")).toBe(false);
+    });
     it("AgentEvent seam 将 attachment 投影为 marker，durable seam 保留引用", () => {
         const input = {
             toolCallId: "read-1",

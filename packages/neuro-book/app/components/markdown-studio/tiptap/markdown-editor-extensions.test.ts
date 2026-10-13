@@ -68,6 +68,23 @@ describe("markdown-studio TipTap Markdown extensions", () => {
         expect(JSON.stringify(parsed)).not.toContain("\"type\":\"foreshadowMarker\"");
         expect(manager.serialize(parsed)).toBe(source);
     });
+
+    it("细纲写作指导与段落参考锚点无损 round-trip，允许互相包含", () => {
+        const manager = createManager();
+        const source = "父亲<!-- nb:guidance marker=\"g1\" -->欲言又止，<!-- nb:reference marker=\"r1\" -->拍了拍肩膀<!-- /nb:reference marker=\"r1\" --><!-- /nb:guidance marker=\"g1\" -->。";
+        const parsed = manager.parse(source);
+        expect(JSON.stringify(parsed)).toContain("\"type\":\"outlineGuidanceAnchor\"");
+        expect(JSON.stringify(parsed)).toContain("\"type\":\"outlineReferenceAnchor\"");
+        expect(manager.serialize(parsed)).toBe(source);
+    });
+
+    it("开闭 marker 不一致的细纲锚点保留源码", () => {
+        const manager = createManager();
+        const source = "<!-- nb:guidance marker=\"g1\" -->原文<!-- /nb:guidance marker=\"g2\" -->";
+        const parsed = manager.parse(source);
+        expect(JSON.stringify(parsed)).not.toContain("\"type\":\"outlineGuidanceAnchor\"");
+        expect(manager.serialize(parsed)).toBe(source);
+    });
     it("行内评论不拆散句子，round-trip 输出 canonical <comment>", () => {
         const manager = createManager();
         const source = "她抬头<comment body=\"这里节奏太快\">看了他一眼</comment>。";

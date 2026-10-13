@@ -32,6 +32,152 @@ describe("规划 Agent 工具边界", () => {
         await expect(byKey("get_planning_context").executeWithContext?.(context(null), "call-1", {})).rejects.toThrow("ready Project");
     });
 
+    it("规划上下文默认只给摘要，按 entryIds 返回可作为 edit-entry 基准的正文与元数据", async () => {
+        const index = await import("nbook/server/outline/index");
+        const entry = (id: string, kind: string, parentId: string | null, body: string, extra: object = {}) => ({
+            path: `outline/entries/${id}.md`, contentHash: objectHash, markers: kind === "chapter" ? [{marker: "fm-01"}] : [],
+            value: {schema: "nbook.outline-entry/v2", id, kind, version: 2, status: "draft", title: id, parentId,
+                chapterId: kind === "detail" ? parentId : null, body, ...extra},
+        });
+        const read = vi.spyOn(index, "readPlanningSnapshot").mockResolvedValue({
+            // 方案 B 使用自己的总纲，条目 ol-chapter 的规范父级仍是创建时的 ol-total。
+            manifest: {revision: 5, plans: [
+                {id: "plan-a", title: "A", totalId: "ol-total", placements: [{entryId: "ol-total", parentId: null, position: 0}, {entryId: "ol-chapter", parentId: "ol-total", position: 0}]},
+                {id: "plan-b", title: "B", totalId: "ol-total-b", placements: [{entryId: "ol-total-b", parentId: null, position: 0}, {entryId: "ol-chapter", parentId: "ol-total-b", position: 0}]},
+            ]},
+            entries: [
+                entry("ol-total", "total", null, "总纲正文"),
+                entry("ol-total-b", "total", null, "方案 B 总纲正文"),
+                entry("ol-chapter", "chapter", "ol-total", "章节正文"),
+                entry("ol-detail", "detail", "ol-chapter", "细纲正文", {targetWords: 3000, analysis: {reportId: "r", planId: "plan-a",
+                    sourceHash: objectHash, contextHash: objectHash, summary: "无冲突", deviations: [], conflicts: [], resolutions: []}}),
+            ],
+            foreshadowing: [], graphs: [], lines: [],
+        } as never);
+        const tool = byKey("get_planning_context");
+        const payloadOf = (output: Awaited<ReturnType<NonNullable<typeof tool.executeWithContext>>>) =>
+            JSON.parse(output.content[0]!.type === "text" ? output.content[0]!.text : "{}");
+        const summary = payloadOf(await tool.executeWithContext!(context(), "call-summary", {}));
+        expect(summary.details).toBeUndefined();
+        expect(summary.totalId).toBeUndefined();
+        expect(summary.plans.map((plan: {id: string; totalId: string}) => [plan.id, plan.totalId])).toEqual([["plan-a", "ol-total"], ["plan-b", "ol-total-b"]]);
+        const chapterSummary = summary.entries.find((item: {id: string}) => item.id === "ol-chapter");
+        expect(chapterSummary).toEqual(expect.objectContaining({id: "ol-chapter", parentId: "ol-total"}));
+        expect(chapterSummary.body).toBeUndefined();
+        const detailed = payloadOf(await tool.executeWithContext!(context(), "call-detail", {entryIds: ["ol-chapter", "ol-detail"]}));
+        expect(detailed.details[0]).toEqual(expect.objectContaining({id: "ol-chapter", body: "章节正文", version: 2, contentHash: objectHash,
+            planIds: ["plan-a", "plan-b"], markers: [{marker: "fm-01"}]}));
+        expect(detailed.details[1]).toEqual(expect.objectContaining({id: "ol-detail", chapterId: "ol-chapter", targetWords: 3000,
+            analysis: expect.objectContaining({summary: "无冲突"})}));
+        expect(detailed.details[1].markers).toBeUndefined();
+        expect(detailed.details[1].schema).toBeUndefined();
+        expect(detailed.plans).toBeUndefined();
+        expect(detailed.entries).toBeUndefined();
+        expect(detailed.graphs).toBeUndefined();
+        expect(detailed.details[0].placements).toEqual([
+            {planId: "plan-a", totalId: "ol-total", entryId: "ol-chapter", parentId: "ol-total", position: 0},
+            {planId: "plan-b", totalId: "ol-total-b", entryId: "ol-chapter", parentId: "ol-total-b", position: 0},
+        ]);
+        expect(detailed.relatedEntries.map((item: {id: string}) => item.id)).toEqual(["ol-total", "ol-total-b"]);
+        expect(detailed.relatedEntries.every((item: {body?: string}) => item.body === undefined)).toBe(true);
+        await expect(tool.executeWithContext!(context(), "call-missing", {entryIds: ["ol-missing"]})).rejects.toThrow("规划条目不存在：ol-missing");
+        await expect(tool.executeWithContext!(context(), "call-bad", {entryIds: ["fo-clue"]})).rejects.toThrow("get_planning_context 参数无效");
+        read.mockRestore();
+    });
+
+    it("大量条目默认只读首页，按 revision 分页能读取完整索引而不重复全库正文", async () => {
+        const index = await import("nbook/server/outline/index");
+        const entries = Array.from({length: 147}, (_, i) => ({path: `outline/entries/ol-${i}.md`, contentHash: objectHash,
+            markers: [], value: {schema: "nbook.outline-entry/v2", id: `ol-${i}`, kind: i === 0 ? "total" : "chapter",
+                version: 3, status: "draft", title: `第${i}章`, parentId: i === 0 ? null : "ol-0", chapterId: null,
+                body: `完整正文${i}`.repeat(1000)}}));
+        const snapshot = {manifest: {revision: 8, plans: [{id: "plan-main", title: "主方案", totalId: "ol-0",
+            placements: entries.map(({value}, position) => ({entryId: value.id, parentId: value.parentId, position}))}]},
+            entries, foreshadowing: [], graphs: [], lines: []};
+        const read = vi.spyOn(index, "readPlanningSnapshot").mockResolvedValue(snapshot as never);
+        const tool = byKey("get_planning_context");
+        const invoke = async (input: object) => {
+            const output = await tool.executeWithContext!(context(), "page", input);
+            return JSON.parse(output.content[0]!.type === "text" ? output.content[0]!.text : "{}");
+        };
+        try {
+            const overview = await invoke({});
+            expect(overview.counts.entries).toBe(147);
+            expect(overview.entries).toHaveLength(32);
+            expect(overview.page).toEqual({offset: 0, limit: 32, total: 147, nextOffset: 32});
+            expect(overview.plans[0].placements).toBeUndefined();
+            expect(overview.graphs).toBeUndefined();
+            expect(overview.lines).toBeUndefined();
+            const ids: string[] = [];
+            let offset: number | null = 0;
+            do {
+                const page = await invoke({mode: "entries", offset, limit: 50, expectedRevision: overview.revision});
+                expect(page.plans).toBeUndefined();
+                expect(page.entries.every((entry: {body?: string}) => entry.body === undefined)).toBe(true);
+                ids.push(...page.entries.map((entry: {id: string}) => entry.id));
+                offset = page.page.nextOffset;
+            } while (offset !== null);
+            expect(ids).toEqual(entries.map(({value}) => value.id));
+            const details = await invoke({entryIds: ["ol-146"]});
+            expect(details.details[0].body).toBe(entries[146]!.value.body);
+            expect(details.details[0]).toMatchObject({version: 3, contentHash: objectHash});
+            expect(details.relatedEntries.map((entry: {id: string}) => entry.id)).toEqual(["ol-0"]);
+            expect(details.entries).toBeUndefined();
+            expect(details.plans).toBeUndefined();
+            expect(JSON.stringify(details).length).toBeLessThan(20000);
+            const repeated = await invoke({entryIds: ["ol-146"], expectedRevision: 8});
+            expect(repeated.contextHash).toBe(details.contextHash);
+            expect(details.contextScope).toEqual({mode: "details", entryIds: ["ol-146"]});
+            read.mockResolvedValue({...snapshot, manifest: {...snapshot.manifest, revision: 9}} as never);
+            await expect(invoke({mode: "entries", offset: 50, expectedRevision: 8})).rejects.toThrow("规划版本已变化");
+        } finally {
+            read.mockRestore();
+        }
+    });
+
+    it("方案、图节点与边按需分页，筛选条件不能被静默忽略", async () => {
+        const index = await import("nbook/server/outline/index");
+        const placement = {entryId: "ol-root", parentId: null, position: 0};
+        const read = vi.spyOn(index, "readPlanningSnapshot").mockResolvedValue({manifest: {revision: 6, plans: [
+            {id: "plan-a", title: "A", totalId: "ol-root", placements: [placement]},
+            {id: "plan-b", title: "B", totalId: "ol-root-b", placements: []},
+        ]}, entries: [{path: "outline/entries/root.md", contentHash: objectHash, markers: [],
+            value: {id: "ol-root", title: "总纲", parentId: null, kind: "total", status: "draft", version: 0}}],
+        foreshadowing: [], lines: [], graphs: [{contentHash: objectHash, value: {id: "gr-a", planId: "plan-a", version: 2,
+            nodes: [{id: "nd-a", entryId: "ol-root", column: 0, row: 0}, {id: "nd-b", entryId: null, column: 1, row: 0}],
+            edges: [{id: "eg-a", from: "nd-a", to: "nd-b"}]}}]} as never);
+        const tool = byKey("get_planning_context");
+        const invoke = async (input: object) => {
+            const output = await tool.executeWithContext!(context(), "topology", input);
+            return JSON.parse(output.content[0]!.type === "text" ? output.content[0]!.text : "{}");
+        };
+        try {
+            const plans = await invoke({mode: "plans", limit: 1, offset: 1});
+            expect(plans.plans.map((plan: {id: string}) => plan.id)).toEqual(["plan-b"]);
+            expect(plans.page.nextOffset).toBeNull();
+            expect((await invoke({mode: "placements", planId: "plan-a"})).placements).toEqual([placement]);
+            const graphs = await invoke({mode: "graphs", planId: "plan-a"});
+            expect(graphs.graphs[0]).toMatchObject({id: "gr-a", nodeCount: 2, edgeCount: 1, version: 2, contentHash: objectHash});
+            expect(graphs.graphs[0].nodes).toBeUndefined();
+            const nodes = await invoke({mode: "graph-nodes", graphId: "gr-a", limit: 1});
+            expect(nodes.nodes).toEqual([{id: "nd-a", entryId: "ol-root", column: 0, row: 0, title: "总纲"}]);
+            expect(nodes.page.nextOffset).toBe(1);
+            expect(nodes.graphVersion).toBe(2);
+            expect((await invoke({mode: "graph-edges", graphId: "gr-a"})).edges).toEqual([{id: "eg-a", from: "nd-a", to: "nd-b"}]);
+            await expect(invoke({mode: "details"})).rejects.toThrow("details 仅支持 entryIds");
+            await expect(invoke({entryIds: ["ol-root"], mode: "entries"})).rejects.toThrow("entryIds 仅支持 details");
+            await expect(invoke({entryIds: ["ol-root"], offset: 0})).rejects.toThrow("不支持分页");
+            await expect(invoke({mode: "entries", graphId: "gr-a"})).rejects.toThrow("graphId 仅支持");
+            await expect(invoke({mode: "placements"})).rejects.toThrow("placements 需要 planId");
+            await expect(invoke({mode: "graph-nodes"})).rejects.toThrow("graph-nodes 需要 graphId");
+            await expect(invoke({mode: "entries", planId: "plan-missing"})).rejects.toThrow("规划方案不存在");
+            await expect(invoke({mode: "graph-nodes", graphId: "gr-a", planId: "plan-b"})).rejects.toThrow("规划线路图不存在");
+            await expect(invoke({mode: "entries", limit: 101})).rejects.toThrow("参数无效");
+        } finally {
+            read.mockRestore();
+        }
+    });
+
     it("删除参数没有 confirmed 时不会通过 schema", () => {
         const tool = byKey("apply_planning_change");
         expect(Value.Check(tool.parameters, {

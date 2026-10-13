@@ -71,6 +71,15 @@ const PANEL_CONTAINER: WorkbenchActivityContainer = {
     viewIds: [],
     canMoveContainer: true,
 };
+const OUTLINE_CONTAINER: WorkbenchActivityContainer = {
+    containerId: "nbook.outline",
+    title: "大纲",
+    icon: "i-lucide-list-tree",
+    location: "sidebar-left",
+    partId: "left",
+    viewIds: ["nbook.writing-outline"],
+    canMoveContainer: true,
+};
 
 const mounted: VueWrapper[] = [];
 
@@ -115,20 +124,37 @@ async function measureBar(wrapper: VueWrapper, height = 720): Promise<void> {
 }
 
 describe("NovelIdeActivityBar", () => {
-    it("上半只有容器条目：标题来自切片，选中态只跟活动容器走", async () => {
+    it("主入口按文件、角色、大纲顺序排列，容器标题来自切片", async () => {
         const wrapper = mountBar();
         await measureBar(wrapper);
 
         expect(wrapper.get("[data-activity-group=primary]").findAll("[data-activity-id]").map((item) => item.attributes("data-activity-id")))
-            .toEqual([TOOLS_CONTAINER.containerId, PANEL_CONTAINER.containerId]);
+            .toEqual([TOOLS_CONTAINER.containerId, PANEL_CONTAINER.containerId, "characters"]);
         expect(wrapper.get(`[data-activity-id="${TOOLS_CONTAINER.containerId}"]`).attributes("aria-pressed")).toBe("true");
         expect(wrapper.get(`[data-activity-id="${TOOLS_CONTAINER.containerId}"]`).attributes("aria-label")).toBe("工具");
         expect(wrapper.get(`[data-activity-id="${PANEL_CONTAINER.containerId}"]`).attributes("aria-pressed")).toBe("false");
+        expect(wrapper.get("[data-activity-id=characters]").attributes("aria-label")).toBe("角色");
 
         const switched = mountBar({activeContainerId: PANEL_CONTAINER.containerId});
         await measureBar(switched);
         expect(switched.get(`[data-activity-id="${PANEL_CONTAINER.containerId}"]`).attributes("aria-pressed")).toBe("true");
         expect(switched.get(`[data-activity-id="${TOOLS_CONTAINER.containerId}"]`).attributes("aria-pressed")).toBe("false");
+    });
+
+    it("存在大纲容器时把角色入口插在文件与大纲之间", async () => {
+        const wrapper = mountBar({containers: [TOOLS_CONTAINER, OUTLINE_CONTAINER, PANEL_CONTAINER]});
+        await measureBar(wrapper);
+
+        expect(wrapper.get("[data-activity-group=primary]").findAll("[data-activity-id]").map((item) => item.attributes("data-activity-id")))
+            .toEqual([TOOLS_CONTAINER.containerId, "characters", OUTLINE_CONTAINER.containerId, PANEL_CONTAINER.containerId]);
+    });
+
+    it("角色工作台打开时只保留角色入口的选中态", async () => {
+        const wrapper = mountBar({charactersOpen: true});
+        await measureBar(wrapper);
+
+        expect(wrapper.get("[data-activity-id=characters]").attributes("aria-pressed")).toBe("true");
+        expect(wrapper.get(`[data-activity-id="${TOOLS_CONTAINER.containerId}"]`).attributes("aria-pressed")).toBe("false");
     });
 
     it("点击条目：容器走 open-container，工具与底部命令走各自的原产品事件", async () => {

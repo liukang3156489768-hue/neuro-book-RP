@@ -41,8 +41,9 @@ async function fixture() {
         snapshot = await openProjectPlanning(ref);
         return result;
     };
-    const total = (await library({kind: "create-total", title: "总纲", body: "开端"})).entryId!;
-    const plan = (await library({kind: "create-plan", title: "方案"})).planId!;
+    const created = await library({kind: "create-plan", title: "方案"});
+    const plan = created.planId!;
+    const total = created.entryId!;
     const lost = (await library({kind: "create-entry", planId: plan, parentId: total,
         entryKind: "chapter", title: "丢失章节", body: "旧内容"})).entryId!;
     const kept = (await library({kind: "create-entry", planId: plan, parentId: total,

@@ -6,6 +6,9 @@ import {useAgentSession} from "nbook/app/components/novel-ide/agent/useAgentSess
 import {useAgentSessionStream} from "nbook/app/components/novel-ide/agent/useAgentSessionStream";
 import type {AgentPendingUserInputSession} from "nbook/app/components/novel-ide/agent/agent-message";
 import type {AgentPendingResolutionDraft} from "nbook/app/components/novel-ide/agent/agent-pending-resolution";
+import type {OutlineWorkbenchCreationMode} from "nbook/shared/storage/outline-workbench";
+import type {OutlineWorkbenchSession} from "nbook/app/utils/outline/outline-workbench-session";
+import {formatOutlineWorkbenchPrompt} from "nbook/app/utils/outline/outline-workbench-message";
 
 export type OutlinePlannerSessionState = Readonly<{
     activeSessionId: number | null;
@@ -24,11 +27,10 @@ export function useOutlineWorkbenchAgent(projectRoot: MaybeRefOrGetter<string | 
     modelKey: MaybeRefOrGetter<string | undefined>;
     temperature: MaybeRefOrGetter<number>;
     thinkingEnabled: MaybeRefOrGetter<boolean>;
+    creationMode?: MaybeRefOrGetter<OutlineWorkbenchCreationMode>;
+    planId?: MaybeRefOrGetter<string | null>;
 }, options?: {
-    workbenchSession?: {
-        state: {value: {activeSessionId: number | null; sessions: readonly any[]}};
-        commit: (patch: any) => Promise<any>;
-    };
+    workbenchSession?: Pick<OutlineWorkbenchSession, "state" | "loading" | "commit">;
 }) {
     const api = useAgentSessionApi();
     const session = useAgentSession();
@@ -39,6 +41,8 @@ export function useOutlineWorkbenchAgent(projectRoot: MaybeRefOrGetter<string | 
     const error = ref<string | null>(null);
     const pendingSubmission = ref(false);
     const pendingDraft = ref<AgentPendingResolutionDraft>({answers: {}, forms: {}});
+    /** 创作模式是会话初始合同；当前设置只在创建新会话时读取。 */
+    const sessionCreationMode = ref<OutlineWorkbenchCreationMode>(toValue(settings.creationMode) ?? "original");
     let operationGeneration = 0;
 
     const stream = useAgentSessionStream({
@@ -62,6 +66,17 @@ export function useOutlineWorkbenchAgent(projectRoot: MaybeRefOrGetter<string | 
         projectRoot: activeProjectRoot.value,
         generation: generation.value,
     }));
+
+    function savedSession(sessionId: number) {
+        return options?.workbenchSession?.state.value.sessions.find((item) => item.sessionId === sessionId);
+    }
+
+    function creationModeForSession(sessionId: number): OutlineWorkbenchCreationMode {
+        return savedSession(sessionId)?.creationMode ?? sessionCreationMode.value;
+    }
+
+    const creationModeLocked = computed(() => Boolean(activeSessionId.value && (savedSession(activeSessionId.value)?.started === true
+        || messages.value.some((message) => message.type === "user"))));
 
     function isCurrent(root: string, currentGeneration: number): boolean {
         // 创建新会话时尚未绑定 activeProjectRoot；generation 已经隔离了切换期间的旧异步结果。
@@ -106,6 +121,7 @@ export function useOutlineWorkbenchAgent(projectRoot: MaybeRefOrGetter<string | 
                     model,
                     temperature: toValue(settings.temperature),
                     thinking: toValue(settings.thinkingEnabled) ? "medium" : "off",
+                    creationMode: toValue(settings.creationMode) ?? "original",
                 },
             });
             if (!isCurrent(root, currentGeneration)) return null;
@@ -125,6 +141,7 @@ export function useOutlineWorkbenchAgent(projectRoot: MaybeRefOrGetter<string | 
 
             activeSessionId.value = created.sessionId;
             activeProjectRoot.value = root;
+            sessionCreationMode.value = toValue(settings.creationMode) ?? "original";
 
             const recovery = await api.getSessionRecovery(created.sessionId);
             if (!isCurrent(root, currentGeneration)) return null;
@@ -142,6 +159,8 @@ export function useOutlineWorkbenchAgent(projectRoot: MaybeRefOrGetter<string | 
                         {
                             sessionId: created.sessionId,
                             title: "新会话",
+                            creationMode: toValue(settings.creationMode) ?? "original",
+                            started: false,
                             createdAt: Date.now(),
                             lastActiveAt: Date.now(),
                         }
@@ -177,6 +196,7 @@ export function useOutlineWorkbenchAgent(projectRoot: MaybeRefOrGetter<string | 
 
             activeSessionId.value = sessionId;
             activeProjectRoot.value = root;
+            sessionCreationMode.value = creationModeForSession(sessionId);
             session.applyRecovery(recovery);
             pendingDraft.value = {answers: {}, forms: {}};
 
@@ -201,6 +221,7 @@ export function useOutlineWorkbenchAgent(projectRoot: MaybeRefOrGetter<string | 
                 );
                 await options.workbenchSession.commit({
                     activeSessionId: sessionId,
+                    creationMode: sessionCreationMode.value,
                     sessions: updatedSessions
                 });
             }
@@ -229,7 +250,7 @@ export function useOutlineWorkbenchAgent(projectRoot: MaybeRefOrGetter<string | 
                 if (filteredSessions.length > 0) {
                     // 切换到最近活动的会话
                     const mostRecent = [...filteredSessions].sort((a, b) => b.lastActiveAt - a.lastActiveAt)[0];
-                    newActiveSessionId = mostRecent.sessionId;
+                    newActiveSessionId = mostRecent?.sessionId ?? null;
                     if (newActiveSessionId !== null) {
                         await switchSession(newActiveSessionId);
                     }
@@ -276,7 +297,7 @@ export function useOutlineWorkbenchAgent(projectRoot: MaybeRefOrGetter<string | 
 
     async function ensureSession(): Promise<number | null> {
         const root = toValue(projectRoot);
-        if (!root) return null;
+        if (!root || options?.workbenchSession?.loading.value) return null;
 
         // 尝试恢复已保存的会话
         const savedSessionId = options?.workbenchSession?.state.value.activeSessionId;
@@ -291,6 +312,7 @@ export function useOutlineWorkbenchAgent(projectRoot: MaybeRefOrGetter<string | 
 
                 activeSessionId.value = savedSessionId;
                 activeProjectRoot.value = root;
+                sessionCreationMode.value = creationModeForSession(savedSessionId);
                 session.applyRecovery(recovery);
                 pendingDraft.value = {answers: {}, forms: {}};
 
@@ -352,6 +374,7 @@ export function useOutlineWorkbenchAgent(projectRoot: MaybeRefOrGetter<string | 
 
             activeSessionId.value = created.sessionId;
             activeProjectRoot.value = root;
+            sessionCreationMode.value = toValue(settings.creationMode) ?? "original";
 
             const recovery = await api.getSessionRecovery(created.sessionId);
             if (!isCurrent(root, currentGeneration)) return null;
@@ -369,6 +392,8 @@ export function useOutlineWorkbenchAgent(projectRoot: MaybeRefOrGetter<string | 
                         {
                             sessionId: created.sessionId,
                             title: "新会话",
+                            creationMode: sessionCreationMode.value,
+                            started: false,
                             createdAt: Date.now(),
                             lastActiveAt: Date.now(),
                         }
@@ -386,13 +411,38 @@ export function useOutlineWorkbenchAgent(projectRoot: MaybeRefOrGetter<string | 
     }
 
     async function sendPrompt(text: string): Promise<void> {
-        const message = text.trim();
-        if (!message || running.value || pendingSubmission.value) return;
-        const sessionId = await ensureSession();
+        const userText = text.trim();
+        if (!userText || running.value || pendingSubmission.value) return;
         const root = toValue(projectRoot);
-        if (!sessionId || !root) return;
         const currentGeneration = generation.value;
+        if (!root) return;
+        const requestedCreationMode = toValue(settings.creationMode) ?? "original";
+        // 已创建但尚未开始对话的空会话可以随创作方式重建；首条用户消息后由锁定合同阻止此路径。
+        if (activeSessionId.value && !creationModeLocked.value && sessionCreationMode.value !== requestedCreationMode) {
+            stream.stop();
+            activeSessionId.value = null;
+            activeProjectRoot.value = null;
+            session.reset();
+            if (options?.workbenchSession) await options.workbenchSession.commit({activeSessionId: null});
+        }
+        // 上下文属于本次提交，不能从恢复的会话 initial 或异步创建后的新选择推导。
+        const context = {
+            creationMode: sessionCreationMode.value,
+            targetPlanId: toValue(settings.planId) ?? null,
+        };
+        const message = formatOutlineWorkbenchPrompt(userText, context);
+        const sessionId = await ensureSession();
+        if (!sessionId || !isCurrent(root, currentGeneration)) return;
         const clientMessageId = crypto.randomUUID();
+        if (options?.workbenchSession) {
+            const sessions = options.workbenchSession.state.value.sessions || [];
+            try {
+                await options.workbenchSession.commit({sessions: sessions.map((item) => item.sessionId === sessionId ? {...item, started: true, lastActiveAt: Date.now()} : item)});
+            } catch (cause) {
+                error.value = resolveApiErrorMessage(cause, "保存规划会话状态失败");
+                return;
+            }
+        }
         session.appendOptimisticUserMessage(clientMessageId, message, [], "prompt");
         try {
             await stream.ensure();
@@ -462,9 +512,11 @@ export function useOutlineWorkbenchAgent(projectRoot: MaybeRefOrGetter<string | 
         operationGeneration += 1;
         generation.value += 1;
         stream.stop();
-        // 不再清空 activeSessionId，保留会话持久化
-        // activeSessionId.value = null;
-        // activeProjectRoot.value = null;
+        // 持久化 ID 由各 Project 的工作台记录保留；内存绑定不能跨 Project 复用。
+        activeSessionId.value = null;
+        activeProjectRoot.value = null;
+        sessionCreationMode.value = toValue(settings.creationMode) ?? "original";
+        loading.value = false;
         pendingDraft.value = {answers: {}, forms: {}};
         pendingSubmission.value = false;
         session.reset();
@@ -492,6 +544,8 @@ export function useOutlineWorkbenchAgent(projectRoot: MaybeRefOrGetter<string | 
         messages,
         pendingDraft,
         pendingSubmission,
+        sessionCreationMode,
+        creationModeLocked,
         pendingUserInputSession,
         pendingUserInputSessions,
         runPhase,

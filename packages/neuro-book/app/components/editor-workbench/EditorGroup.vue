@@ -226,6 +226,15 @@ watch(hasTabs, (newHasTabs, oldHasTabs) => {
             </div>
         </div>
 
+        <div
+            v-if="props.group.notice"
+            role="status"
+            class="editor-workbench-notice flex shrink-0 items-center gap-2 border-b border-[var(--status-info-border)] bg-[var(--status-info-bg)] px-3 py-1.5 text-xs text-[var(--text-main)] select-none"
+        >
+            <span class="i-lucide-lock h-3.5 w-3.5 shrink-0 text-[var(--status-info)]" aria-hidden="true" />
+            <span class="min-w-0 flex-1 truncate">{{ props.group.notice }}</span>
+        </div>
+
         <!-- 主内容区：有文档时为 tabpanel 承载视图；无文档时为欢迎页 -->
         <div
             ref="contentAreaRef"

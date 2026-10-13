@@ -4,7 +4,7 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {afterEach, describe, expect, it, vi} from "vitest";
 import {absoluteFsPath} from "nbook/server/runtime/paths/file-path";
-import {readWorkspaceTextFile, writeWorkspaceTextFile} from "nbook/server/workspace-files/workspace-files";
+import {parseMarkdownDocument, readWorkspaceTextFile, writeWorkspaceTextFile} from "nbook/server/workspace-files/workspace-files";
 import {createInspirationStorage} from "./storage";
 import type {InspirationDraftDto, InspirationSaveDto} from "nbook/shared/dto/inspiration.dto";
 
@@ -20,6 +20,41 @@ async function fixture() {
     return {root, storage, draft, input};
 }
 describe("Inspiration 文件保存", () => {
+    it("改编另存独立素材，保留来源且元数据只保存来源身份，重复保存幂等", async () => {
+        const f = await fixture(); const sourcePath = "lorebook/character/original/index.md";
+        await writeWorkspaceTextFile(f.root, sourcePath, "用户原人设");
+        const draft = {...f.draft, creationMode: "adaptation" as const, materialSources: [{path: sourcePath, category: "character" as const, title: "原角色", sha256: "a".repeat(64), content: "参考快照私有正文"}]};
+        const saved = await f.storage.save(draft, f.input);
+        expect(saved.saved[0]!.path).not.toBe(sourcePath);
+        expect(await readWorkspaceTextFile(f.root, sourcePath)).toBe("用户原人设");
+        const text = await readWorkspaceTextFile(f.root, saved.saved[0]!.path);
+        expect(text).not.toContain("参考快照私有正文");
+        expect(parseMarkdownDocument(text).frontmatter).toMatchObject({ext: {inspiration: {creationMode: "adaptation", materialSources: [{path: sourcePath, sha256: "a".repeat(64)}]}}});
+        expect(await f.storage.save(draft, f.input)).toEqual(saved);
+    });
+    it("首次列出会话时清除旧提取数据，混合会话保留原创消息和草稿，正式条目不受影响", async () => {
+        const f = await fixture(); const now = new Date().toISOString();
+        const legacyDraftId = randomUUID(); const legacyArtifactId = randomUUID();
+        await writeWorkspaceTextFile(f.root, `.nbook/inspiration/${legacyDraftId}/draft.json`, JSON.stringify({id: legacyDraftId, projectRoot: "novel", revision: 1, request: "旧提取", sessionId: 3, createdAt: now, artifacts: [{id: legacyArtifactId, category: "note", title: "旧", content: "旧", sessionId: 4, source: {path: "reference/book.md", sha256: "a".repeat(64), chunkIndex: 1, citations: [{firstParagraphId: "P1", lastParagraphId: "P2"}]}}]}));
+        const mixedId = randomUUID();
+        await writeWorkspaceTextFile(f.root, `.nbook/inspiration/conversations/${mixedId}.json`, JSON.stringify({id: mixedId, projectRoot: "novel", title: "旧混合会话", createdAt: now, updatedAt: now, archivedAt: null, messages: [
+            {id: randomUUID(), role: "user", kind: "design", content: "保留原创", createdAt: now},
+            {id: randomUUID(), role: "assistant", kind: "extract", content: "删除旧提取", createdAt: now, draftId: legacyDraftId},
+        ]}));
+        const pureId = randomUUID();
+        await writeWorkspaceTextFile(f.root, `.nbook/inspiration/conversations/${pureId}.json`, JSON.stringify({id: pureId, projectRoot: "novel", title: "旧纯提取", createdAt: now, updatedAt: now, archivedAt: null, messages: [{id: randomUUID(), role: "assistant", kind: "extract", content: "删除", createdAt: now, draftId: legacyDraftId}]}));
+        await writeWorkspaceTextFile(f.root, "lorebook/note/kept/index.md", "正式条目");
+
+        await f.storage.cleanupLegacyExtractionData?.();
+        const conversations = await f.storage.listConversations();
+        expect(conversations.map(item => item.id)).toContain(mixedId);
+        expect(conversations.map(item => item.id)).not.toContain(pureId);
+        expect((await f.storage.readConversation(mixedId)).messages).toHaveLength(1);
+        await expect(f.storage.readDraft(legacyDraftId)).rejects.toThrow("不存在");
+        expect(await readWorkspaceTextFile(f.root, "lorebook/note/kept/index.md")).toBe("正式条目");
+        await f.storage.cleanupLegacyExtractionData?.();
+    });
+
     it("聊天记录在当前项目的内部状态中持久化，并可归档而不物理删除", async () => {
         const f = await fixture(); const now = new Date().toISOString();
         const conversation = {id: randomUUID(), projectRoot: "novel", title: "提取设定", createdAt: now, updatedAt: now, archivedAt: null, messages: []};

@@ -178,6 +178,7 @@ export function createDefaultEffectiveConfig(): EffectiveConfig {
         },
         embedding: {...DEFAULT_EMBEDDING_SERVICE},
         agent: {
+            summarizerModelKey: null,
             defaultProfileKey: {
                 novel: null,
                 userAssets: null,
@@ -220,6 +221,7 @@ export function normalizeGlobalConfig(input: Partial<StoredGlobalConfig> | null 
         },
         embedding: normalizeStoredEmbeddingService(raw.embedding, readLegacyEmbedding(raw.models)),
         agent: {
+            summarizerModelKey: normalizeNullableModelKey(raw.agent?.summarizerModelKey),
             defaultProfileKey: {
                 novel: normalizeNullableModelKey(raw.agent?.defaultProfileKey?.novel),
                 userAssets: normalizeNullableModelKey(raw.agent?.defaultProfileKey?.userAssets),
@@ -306,6 +308,7 @@ export function resolveEffectiveConfig(globalConfig: StoredGlobalConfig, project
         novel: normalizeNullableModelKey(globalConfig.agent?.defaultProfileKey?.novel),
         userAssets: normalizeNullableModelKey(globalConfig.agent?.defaultProfileKey?.userAssets),
     };
+    effective.agent.summarizerModelKey = normalizeNullableModelKey(globalConfig.agent?.summarizerModelKey);
     effective.agent.profileModelDefaults = normalizeAgentProfileModelDefaults(globalConfig.agent?.profileModelDefaults);
     const globalRuntimeDefaults = normalizeProfileRuntimeSettingsPatch(globalConfig.agent?.profileRuntimeDefaults);
     effective.agent.profileRuntimeDefaults = globalRuntimeDefaults;

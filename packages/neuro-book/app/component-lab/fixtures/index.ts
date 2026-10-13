@@ -132,6 +132,9 @@ import {agentChatFlowScenes, agentChatEmptyStateScenes, agentChatHistoryLoaderSc
 import type AgentProfileNavList from "../../components/novel-ide/settings/sections/agent-profile/components/AgentProfileNavList.vue";
 import type AgentProfileSettingsView from "../../components/novel-ide/settings/sections/agent-profile/AgentProfileSettingsView.vue";
 import type NovelIdeSettingsView from "../../components/novel-ide/settings/sections/NovelIdeSettingsView.vue";
+import type PromptManagementSettingsView from "../../components/novel-ide/settings/sections/prompt-management/PromptManagementSettingsView.vue";
+import type TavernPresetEditor from "../../components/novel-ide/settings/sections/prompt-management/TavernPresetEditor.vue";
+import {promptManagementScenes, tavernPresetEditorScenes} from "./PromptManagement.scenes";
 import type FrontendSettingsView from "../../components/novel-ide/settings/sections/frontend/FrontendSettingsView.vue";
 import type SettingsLoadState from "../../components/novel-ide/settings/sections/components/SettingsLoadState.vue";
 import type WebSettingsView from "../../components/novel-ide/settings/sections/web/WebSettingsView.vue";
@@ -387,6 +390,8 @@ export const labFixtures: LabFixture[] = [
     defineLabFixture<typeof AgentProfileNavList>({component: "AgentProfileNavList", scenes: agentProfileNavListScenes, load: async () => (await import("./AgentProfileNavListFixture.vue")).default}),
     defineLabFixture<typeof AgentProfileSettingsView>({component: "AgentProfileSettingsView", scenes: agentProfileSettingsViewScenes, load: async () => (await import("./AgentProfileSettingsViewFixture.vue")).default}),
     defineLabFixture<typeof NovelIdeSettingsView>({component: "NovelIdeSettingsView", scenes: novelIdeSettingsViewScenes, load: async () => (await import("./NovelIdeSettingsViewFixture.vue")).default}),
+    defineLabFixture<typeof PromptManagementSettingsView>({component: "PromptManagementSettingsView", scenes: promptManagementScenes, load: async () => (await import("./PromptManagementSettingsViewFixture.vue")).default}),
+    defineLabFixture<typeof TavernPresetEditor>({component: "TavernPresetEditor", scenes: tavernPresetEditorScenes, load: async () => (await import("./TavernPresetEditorFixture.vue")).default}),
     defineLabFixture<typeof FrontendSettingsView>({component: "FrontendSettingsView", scenes: frontendSettingsViewScenes, load: async () => (await import("./FrontendSettingsViewFixture.vue")).default}),
     defineLabFixture<typeof SettingsLoadState>({component: "SettingsLoadState", scenes: settingsLoadStateScenes, load: async () => (await import("./SettingsLoadStateFixture.vue")).default}),
     defineLabFixture<typeof WebSettingsView>({component: "WebSettingsView", scenes: webSettingsViewScenes, load: async () => (await import("./WebSettingsViewFixture.vue")).default}),

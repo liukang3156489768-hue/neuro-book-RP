@@ -515,6 +515,21 @@ export type AgentActiveInvocationDto = {
     startedAt: number;
 };
 
+/** 压缩运行状态与摘要费用；正文不进入恢复壳或事件流。 */
+export type AgentCompactionStateDto = {
+    invocationId: string;
+    status: "running" | "completed" | "failed" | "cancelled";
+    stage: "pruning" | "summarizing";
+    startedAt: number;
+    updatedAt: number;
+    completedBatches: number;
+    totalBatches?: number;
+    tokensBefore: number;
+    tokensAfter?: number;
+    usage?: Usage;
+    error?: string;
+};
+
 /** 公开 session shell 只暴露模型选择身份，不暴露 baseUrl、headers、compat 或价格 metadata。 */
 export type AgentSessionModelRefDto = {
     providerConfigId: string;
@@ -522,6 +537,7 @@ export type AgentSessionModelRefDto = {
 };
 
 export type AgentSessionLiveStateDto = {
+    compaction?: AgentCompactionStateDto | null;
     summary: AgentSessionSummaryDto;
     /** 后台标题/摘要维护状态。为空表示当前 session 未启用或尚无摘要状态。 */
     summarizer?: AgentSessionSummarizerStateDto;
@@ -650,6 +666,7 @@ export type AgentAssistantUpdateDto =
     };
 
 export type AgentRuntimeStreamEventDto =
+    | {type: "compaction_update"; state: AgentCompactionStateDto}
     | {
         type: "agent_start";
     }
@@ -798,6 +815,7 @@ export type AgentChatHistoryPageDto = {
 
 /** 打开、刷新或 SSE recovery 使用的 session 恢复真相。 */
 export type AgentSessionRecoveryDto = {
+    compaction?: AgentCompactionStateDto | null;
     kind: "recovery";
     eventCursor: AgentEventCursorDto;
     summary: AgentSessionSummaryDto;

@@ -49,3 +49,21 @@ export const SHELL_PANEL_CONTAINER: ContainerDescriptor = {
     location: "panel",
     order: 30,
 };
+
+/** 写作大纲容器：默认落在"文件"所在的左栏，活动栏里排在工具容器之后。 */
+export const WRITING_OUTLINE_CONTAINER: ContainerDescriptor = {
+    id: "nbook.outline",
+    titleKey: "ide.workbench.container.outline",
+    icon: "i-lucide-list-tree",
+    location: "sidebar-left",
+    order: 15,
+};
+
+/** 写作会话容器：右栏，一章一个主创会话。 */
+export const WRITING_SESSION_CONTAINER: ContainerDescriptor = {
+    id: "nbook.writing",
+    titleKey: "ide.workbench.container.writing",
+    icon: "i-lucide-feather",
+    location: "sidebar-right",
+    order: 15,
+};

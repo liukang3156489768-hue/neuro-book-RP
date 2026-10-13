@@ -3,22 +3,18 @@ import {createError} from "h3";
 import {z} from "zod";
 import type {JsonValue} from "nbook/server/agent/messages/types";
 import {
-    InspirationCategorySchema, InspirationDraftSchema, INSPIRATION_TEMPLATE_FIELDS,
-    type InspirationArtifactRefineDto, type InspirationConversationDto, type InspirationConversationSummaryDto, type InspirationDraftDto, type InspirationExtractDto, type InspirationGenerateDto, type InspirationMessageDto, type InspirationSaveDto, type InspirationSaveResultDto,
+    InspirationCategorySchema, InspirationDraftSchema, InspirationMaterialSourcesSchema, INSPIRATION_TEMPLATE_FIELDS,
+    type InspirationArtifactRefineDto, type InspirationConversationDto, type InspirationConversationSummaryDto, type InspirationDraftDto, type InspirationGenerateDto, type InspirationMaterialSourceDto, type InspirationMessageDto, type InspirationSaveDto, type InspirationSaveResultDto,
 } from "nbook/shared/dto/inspiration.dto";
-import type {InspirationSourcePrepareResponseDto} from "nbook/shared/dto/inspiration-source.dto";
 
 const PlanSchema = z.object({assignments: z.array(z.object({category: InspirationCategorySchema, brief: z.string().trim().min(1).max(20_000)}).strict()).min(1).max(8)}).strict()
     .refine(value => new Set(value.assignments.map(item => item.category)).size === value.assignments.length, "专业类别重复");
 const StructuredFieldsSchema = z.record(z.string().trim().min(1).max(120), z.string().trim().min(1).max(80_000)).refine(value => Object.keys(value).length <= 32, "模板字段过多");
 const OutputSchema = z.object({artifacts: z.array(z.object({title: z.string().trim().min(1).max(120), fields: StructuredFieldsSchema}).strict()).min(1).max(4)}).strict();
-const ExtractionOutputSchema = z.object({artifacts: z.array(z.object({
-    category: InspirationCategorySchema, title: z.string().trim().min(1).max(120), fields: StructuredFieldsSchema,
-    citations: z.array(z.object({firstParagraphId: z.string().regex(/^P[1-9]\d*$/u), lastParagraphId: z.string().regex(/^P[1-9]\d*$/u)}).strict()).min(1).max(12),
-}).strict()).min(1).max(12)}).strict();
-
 export interface InspirationAgentPort {
-    run(input: {profileKey: string; projectRoot: string; parentSessionId?: number; initial: Record<string, JsonValue>; message: string; signal: AbortSignal; modelKey?: string; thinkingLevel?: import("nbook/shared/dto/app-settings.dto").ThinkingLevelDto; temperature?: number}): Promise<{sessionId: number; data: unknown}>;
+    run(input: {profileKey: string; projectRoot: string; parentSessionId?: number; promptSnapshotId?: string; initial: Record<string, JsonValue>; message: string; signal: AbortSignal; modelKey?: string; thinkingLevel?: import("nbook/shared/dto/app-settings.dto").ThinkingLevelDto; temperature?: number}): Promise<{sessionId: number; data: unknown}>;
+    /** Conversation creation fixes the global version even when its first request is sent later. */
+    promptSnapshot?(input: {projectRoot: string; conversationId?: string; inheritSessionId?: number; newConversation?: boolean}): Promise<string>;
 }
 export interface InspirationStoragePort {
     readDraft(id: string): Promise<unknown>;
@@ -28,21 +24,30 @@ export interface InspirationStoragePort {
     readConversation(id: string): Promise<InspirationConversationDto>;
     listConversations(): Promise<InspirationConversationSummaryDto[]>;
     updateConversation(conversation: InspirationConversationDto): Promise<InspirationConversationDto>;
+    /** 首次读取旧版工作台数据时清理旧提取消息与草稿；实现必须幂等且不得触碰 lorebook。 */
+    cleanupLegacyExtractionData?(): Promise<void>;
+}
+export interface InspirationMaterialPort {
+    readSelected(paths: readonly string[], signal: AbortSignal): Promise<InspirationMaterialSourceDto[]>;
 }
 
 /** 只协调已验证的草稿与专业会话；正式文件写入只通过显式 save 进入存储端口。 */
 export class InspirationService {
     constructor(private readonly agents: InspirationAgentPort) {}
 
-    async generate(input: InspirationGenerateDto, storage: InspirationStoragePort, signal: AbortSignal): Promise<InspirationDraftDto> {
+    async generate(input: InspirationGenerateDto, storage: InspirationStoragePort, signal: AbortSignal, materials?: InspirationMaterialPort): Promise<InspirationDraftDto> {
         signal.throwIfAborted();
-        if (input.conversationId) await this.appendMessage(storage, input.projectRoot, input.conversationId, {role: "user", kind: "design", content: input.request});
         let previous: InspirationDraftDto | undefined;
         if (input.draftId) {
             previous = await this.readDraft(storage, input.projectRoot, input.draftId, input.revision!);
         }
-        const context = JSON.stringify({request: input.request, feedback: input.feedback, previousArtifacts: previous?.artifacts});
-        const coordinator = await this.agents.run({profileKey: "inspiration", projectRoot: input.projectRoot, initial: {}, message: context, signal, modelKey: input.modelKey, thinkingLevel: input.thinkingEnabled ? input.thinkingLevel : "off", temperature: input.temperature});
+        const designContext = await this.designContext(input, previous, signal, materials);
+        signal.throwIfAborted();
+        const promptSnapshotId = await this.agents.promptSnapshot?.({projectRoot: input.projectRoot, conversationId: input.conversationId, inheritSessionId: previous?.sessionId});
+        if (input.conversationId) await this.appendMessage(storage, input.projectRoot, input.conversationId, {role: "user", kind: "design", content: input.request,
+            creationMode: designContext.creationMode, materialPaths: designContext.materialSources.map(source => source.path)});
+        const context = JSON.stringify({request: input.request, feedback: input.feedback, previousArtifacts: previous?.artifacts, ...designContext});
+        const coordinator = await this.agents.run({profileKey: "inspiration", projectRoot: input.projectRoot, promptSnapshotId, initial: {}, message: context, signal, modelKey: input.modelKey, thinkingLevel: input.thinkingEnabled ? input.thinkingLevel : "off", temperature: input.temperature});
         signal.throwIfAborted();
         const plan = PlanSchema.parse(coordinator.data);
         const artifacts: InspirationDraftDto["artifacts"] = [];
@@ -51,7 +56,7 @@ export class InspirationService {
             const result = await this.agents.run({
                 profileKey: `inspiration.${assignment.category}`, projectRoot: input.projectRoot,
                 parentSessionId: coordinator.sessionId, initial: {fields: [...INSPIRATION_TEMPLATE_FIELDS[assignment.category]]},
-                message: JSON.stringify({request: input.request, brief: assignment.brief, feedback: input.feedback, previousArtifacts: previous?.artifacts, relatedArtifacts: artifacts}), signal,
+                message: JSON.stringify({request: input.request, brief: assignment.brief, feedback: input.feedback, previousArtifacts: previous?.artifacts, relatedArtifacts: artifacts, ...designContext}), signal,
                 modelKey: input.modelKey, thinkingLevel: input.thinkingEnabled ? input.thinkingLevel : "off", temperature: input.temperature,
             });
             signal.throwIfAborted();
@@ -59,91 +64,90 @@ export class InspirationService {
             for (const artifact of output.artifacts) artifacts.push({title: artifact.title, content: this.renderTemplateContent(assignment.category, artifact.fields), id: randomUUID(), category: assignment.category, sessionId: result.sessionId});
         }
         // 每次反馈产生独立不可变快照，旧版本仍可查看；保存必须显式引用所审阅的快照身份。
-        const draft = InspirationDraftSchema.parse({id: randomUUID(), projectRoot: input.projectRoot, revision: (previous?.revision ?? 0) + 1, request: input.request, artifacts, sessionId: coordinator.sessionId, createdAt: new Date().toISOString()});
+        const draft = InspirationDraftSchema.parse({id: randomUUID(), projectRoot: input.projectRoot, revision: (previous?.revision ?? 0) + 1, request: input.request, artifacts, sessionId: coordinator.sessionId, createdAt: new Date().toISOString(),
+            creationMode: designContext.creationMode, ...(designContext.materialSources.length ? {materialSources: designContext.materialSources} : {})});
         signal.throwIfAborted();
         await storage.createDraft(draft);
-        if (input.conversationId) await this.appendMessage(storage, input.projectRoot, input.conversationId, {role: "assistant", kind: "design", content: `已生成 ${artifacts.length} 项待审阅的原创设计成果。`, draftId: draft.id});
+        if (input.conversationId) await this.appendMessage(storage, input.projectRoot, input.conversationId, {role: "assistant", kind: "design", content: `已生成 ${artifacts.length} 项待审阅的${designContext.creationMode === "adaptation" ? "改编" : "原创"}设计成果。`, draftId: draft.id,
+            creationMode: designContext.creationMode, materialPaths: designContext.materialSources.map(source => source.path)});
         signal.throwIfAborted();
         return draft;
     }
 
-    async extract(input: InspirationExtractDto, source: InspirationSourcePrepareResponseDto, storage: InspirationStoragePort, signal: AbortSignal): Promise<InspirationDraftDto> {
+    async refine(input: InspirationArtifactRefineDto, storage: InspirationStoragePort, signal: AbortSignal): Promise<{draft: InspirationDraftDto; answer?: string}> {
         signal.throwIfAborted();
-        const chunks = input.chunkIndexes.map(index => source.chunks.find(chunk => chunk.index === index)).filter((chunk): chunk is NonNullable<typeof chunk> => Boolean(chunk));
-        if (chunks.length !== input.chunkIndexes.length) throw createError({statusCode: 409, message: "作品分块已变化，请重新选择分析范围"});
-        await this.appendMessage(storage, input.projectRoot, input.conversationId, {
-            role: "user", kind: "extract", content: input.request,
-            source: {path: source.source.path, sha256: source.source.sha256, chunkIndexes: input.chunkIndexes},
-        });
-        const artifacts: InspirationDraftDto["artifacts"] = [];
-        let sessionId = 0;
-        for (const chunk of chunks) {
-            signal.throwIfAborted();
-            const text = source.paragraphs.filter(paragraph => paragraph.chunkIndex === chunk.index).map(paragraph => `[${paragraph.id}]\n${paragraph.text}`).join("");
-            const result = await this.agents.run({
-                profileKey: "inspiration.extract", projectRoot: input.projectRoot,
-                initial: {categories: input.categories, fields: Object.fromEntries(input.categories.map(category => [category, [...INSPIRATION_TEMPLATE_FIELDS[category]]]))},
-                message: JSON.stringify({request: input.request, source: {path: source.source.path, sha256: source.source.sha256, chunkIndex: chunk.index, firstParagraphId: chunk.firstParagraphId, lastParagraphId: chunk.lastParagraphId}, text}), signal,
-                modelKey: input.modelKey, thinkingLevel: input.thinkingEnabled ? input.thinkingLevel : "off", temperature: input.temperature,
-            });
-            sessionId = result.sessionId;
-            const output = ExtractionOutputSchema.parse(result.data);
-            for (const artifact of output.artifacts) {
-                if (!input.categories.includes(artifact.category) || !artifact.citations.every(citation => this.isCitationInChunk(citation, chunk))) {
-                    throw createError({statusCode: 502, message: "提取 Agent 返回了范围外的类别或段落引用，请重试"});
-                }
-                artifacts.push({category: artifact.category, title: artifact.title, content: this.renderTemplateContent(artifact.category, artifact.fields), id: randomUUID(), sessionId: result.sessionId, source: {path: source.source.path, sha256: source.source.sha256, chunkIndex: chunk.index, citations: artifact.citations}});
-            }
-        }
-        if (sessionId === 0 || artifacts.length === 0) throw createError({statusCode: 502, message: "提取 Agent 未返回可审阅成果"});
-        const draft = InspirationDraftSchema.parse({id: randomUUID(), projectRoot: input.projectRoot, revision: 1, request: input.request, artifacts, sessionId, createdAt: new Date().toISOString()});
-        signal.throwIfAborted();
-        await storage.createDraft(draft);
-        await this.appendMessage(storage, input.projectRoot, input.conversationId, {role: "assistant", kind: "extract", content: `已从 ${chunks.length} 个分块提取 ${artifacts.length} 项待审阅成果；每项均保留原文段落引用。`, draftId: draft.id});
-        return draft;
-    }
-
-    async refine(input: InspirationArtifactRefineDto, source: InspirationSourcePrepareResponseDto | undefined, storage: InspirationStoragePort, signal: AbortSignal): Promise<{draft: InspirationDraftDto; answer?: string}> {
         const previous = await this.readDraft(storage, input.projectRoot, input.draftId, input.revision);
+        await this.readConversation(input.projectRoot, input.conversationId, storage);
         const artifact = previous.artifacts.find(item => item.id === input.artifactId);
         if (!artifact) throw createError({statusCode: 404, message: "候选成果不存在或已被替换"});
+        const promptSnapshotId = await this.agents.promptSnapshot?.({projectRoot: input.projectRoot, conversationId: input.conversationId, inheritSessionId: previous.sessionId});
         const result = await this.agents.run({
-            profileKey: artifact.source ? "inspiration.extract" : `inspiration.${artifact.category}`,
+            profileKey: `inspiration.${artifact.category}`,
             projectRoot: input.projectRoot,
-            initial: artifact.source ? {categories: [artifact.category], fields: {[artifact.category]: [...INSPIRATION_TEMPLATE_FIELDS[artifact.category]]}} : {fields: [...INSPIRATION_TEMPLATE_FIELDS[artifact.category]]},
-            message: JSON.stringify({action: input.action, instruction: input.instruction, currentArtifact: {title: artifact.title, content: artifact.content}, source: source?.source, sourceText: source?.paragraphs.filter(p => p.chunkIndex === artifact.source?.chunkIndex).map(p => `[${p.id}]\n${p.text}`).join("")}),
+            promptSnapshotId,
+            initial: {fields: [...INSPIRATION_TEMPLATE_FIELDS[artifact.category]]},
+            message: JSON.stringify({action: input.action, instruction: input.instruction, request: previous.request,
+                creationMode: previous.creationMode ?? "original", materialSources: previous.materialSources ?? [],
+                currentArtifact: {title: artifact.title, content: artifact.content},
+                relatedArtifacts: previous.artifacts.filter(item => item.id !== artifact.id)}),
             signal, modelKey: input.modelKey, thinkingLevel: input.thinkingEnabled ? input.thinkingLevel : "off", temperature: input.temperature,
         });
+        signal.throwIfAborted();
         if (input.action === "ask") {
-            const output = artifact.source ? ExtractionOutputSchema.safeParse(result.data) : OutputSchema.safeParse(result.data);
+            const output = OutputSchema.safeParse(result.data);
             const answer = output.success ? this.renderTemplateContent(artifact.category, output.data.artifacts[0]!.fields) : "已收到追问，但模型没有返回可解析的模板字段。";
-            await this.appendMessage(storage, input.projectRoot, input.conversationId, {role: "assistant", kind: artifact.source ? "extract" : "design", content: answer});
+            await this.appendMessage(storage, input.projectRoot, input.conversationId, {role: "assistant", kind: "design", content: answer,
+                creationMode: previous.creationMode ?? "original", materialPaths: previous.materialSources?.map(source => source.path)});
             return {draft: previous, answer};
         }
         let title: string;
         let fields: Record<string, string>;
-        let citations = artifact.source?.citations;
-        if (artifact.source) {
-            const candidate = ExtractionOutputSchema.parse(result.data).artifacts[0]!;
-            if (candidate.category !== artifact.category || !candidate.citations.every(citation => source?.chunks.some(chunk => chunk.index === artifact.source?.chunkIndex && this.isCitationInChunk(citation, chunk)))) {
-                throw createError({statusCode: 502, message: "重新提取返回了范围外的类别或段落引用，请重试"});
-            }
-            title = candidate.title; fields = candidate.fields; citations = candidate.citations;
-        } else {
-            const candidate = OutputSchema.parse(result.data).artifacts[0]!;
-            title = candidate.title; fields = candidate.fields;
-        }
+        const candidate = OutputSchema.parse(result.data).artifacts[0]!;
+        title = candidate.title; fields = candidate.fields;
         const content = this.renderTemplateContent(artifact.category, fields);
-        const replacement = {...artifact, title, content, ...(artifact.source && citations ? {source: {...artifact.source, citations}} : {})};
-        const next = InspirationDraftSchema.parse({...previous, id: randomUUID(), revision: previous.revision + 1, artifacts: previous.artifacts.map(item => item.id === artifact.id ? replacement : item), createdAt: new Date().toISOString()});
+        // 另存成果的身份与本次实际设计会话一起更新，避免重做沿用已保存条目的目标路径。
+        const replacement = {...artifact, id: randomUUID(), sessionId: result.sessionId, title, content};
+        const next = InspirationDraftSchema.parse({...previous, id: randomUUID(), revision: previous.revision + 1,
+            artifacts: previous.artifacts.map(item => item.id === artifact.id ? replacement : {...item, id: randomUUID()}), createdAt: new Date().toISOString()});
+        signal.throwIfAborted();
         await storage.createDraft(next);
-        await this.appendMessage(storage, input.projectRoot, input.conversationId, {role: "assistant", kind: artifact.source ? "extract" : "design", content: `已针对“${artifact.title}”完成重新提取。`, draftId: next.id});
+        await this.appendMessage(storage, input.projectRoot, input.conversationId, {role: "assistant", kind: "design", content: `已针对“${artifact.title}”完成重新设计。`, draftId: next.id,
+            creationMode: previous.creationMode ?? "original", materialPaths: previous.materialSources?.map(source => source.path)});
         return {draft: next};
+    }
+
+    private async designContext(input: InspirationGenerateDto, previous: InspirationDraftDto | undefined, signal: AbortSignal, materials?: InspirationMaterialPort) {
+        const creationMode = input.creationMode ?? previous?.creationMode ?? "original";
+        const paths = input.materialPaths ?? previous?.materialSources?.map(source => source.path) ?? [];
+        if (previous && creationMode !== (previous.creationMode ?? "original")) {
+            throw createError({statusCode: 409, message: "创作方式已改变，请作为新设计任务开始"});
+        }
+        if (new Set(paths.map(path => path.toLowerCase())).size !== paths.length) throw createError({statusCode: 400, message: "参考素材不能重复"});
+        if (creationMode === "original") {
+            if (paths.length) throw createError({statusCode: 400, message: "请选择改编模式后使用参考素材"});
+            return {creationMode, materialSources: [] as InspirationMaterialSourceDto[]};
+        }
+        if (!paths.length) throw createError({statusCode: 400, message: "改编设计需要先选择参考素材"});
+        if (previous) {
+            const sources = InspirationMaterialSourcesSchema.parse(previous.materialSources ?? []);
+            if (sources.length !== paths.length || sources.some(source => !paths.includes(source.path))) {
+                throw createError({statusCode: 409, message: "参考素材已改变，请作为新设计任务开始"});
+            }
+            return {creationMode, materialSources: sources};
+        }
+        if (!materials) throw createError({statusCode: 503, message: "参考素材读取服务不可用"});
+        const sources = InspirationMaterialSourcesSchema.parse(await materials.readSelected(paths, signal));
+        if (sources.length !== paths.length || sources.some(source => !paths.includes(source.path))) {
+            throw createError({statusCode: 400, message: "读取结果与所选参考素材不一致"});
+        }
+        return {creationMode, materialSources: sources};
     }
 
     async createConversation(projectRoot: string, storage: InspirationStoragePort, title = "新设计对话"): Promise<InspirationConversationDto> {
         const now = new Date().toISOString();
-        return storage.createConversation({id: randomUUID(), projectRoot, title, createdAt: now, updatedAt: now, archivedAt: null, messages: []});
+        const id = randomUUID();
+        await this.agents.promptSnapshot?.({projectRoot, conversationId: id, newConversation: true});
+        return storage.createConversation({id, projectRoot, title, createdAt: now, updatedAt: now, archivedAt: null, messages: []});
     }
 
     async listConversations(projectRoot: string, storage: InspirationStoragePort, includeArchived: boolean): Promise<InspirationConversationSummaryDto[]> {
@@ -183,12 +187,6 @@ export class InspirationService {
         if (conversation.archivedAt) throw createError({statusCode: 409, message: "聊天记录已归档，请新建对话后继续"});
         const createdAt = new Date().toISOString();
         await storage.updateConversation({...conversation, updatedAt: createdAt, messages: [...conversation.messages, {id: randomUUID(), createdAt, ...message}].slice(-200)});
-    }
-
-    private isCitationInChunk(citation: {firstParagraphId: string; lastParagraphId: string}, chunk: InspirationSourcePrepareResponseDto["chunks"][number]): boolean {
-        const first = Number(citation.firstParagraphId.slice(1)); const last = Number(citation.lastParagraphId.slice(1));
-        return Number.isInteger(first) && Number.isInteger(last) && first <= last
-            && first >= Number(chunk.firstParagraphId.slice(1)) && last <= Number(chunk.lastParagraphId.slice(1));
     }
 
     private renderTemplateContent(category: keyof typeof INSPIRATION_TEMPLATE_FIELDS, fields: Record<string, string>): string {

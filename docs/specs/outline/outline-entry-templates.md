@@ -1,8 +1,35 @@
-# 大纲条目内容模板设计
+---
+schema: nbook.spec/v1
+kind: behavior
+status: planned
+capability: outline.entry-templates
+owners:
+  - outline-planning
+  - writing
+---
 
-**状态**：设计阶段（2026-09-28）  
-**相关模块**：大纲规划模块  
-**作者**：开发者需求，Claude Opus 5 技术设计
+# 大纲条目内容模板
+
+## 目标与非目标
+
+为总纲、卷纲、章节大纲和细纲提供一致的正文模板与字段解释，供工作台插入、规划生成、作品提取和写作解析使用。细纲使用正文模板，2026-10-04 经开发者批准增加地点、角色资料与服饰可选字段，见[批准的资料补充设计](../../proposals/writing-detail-material-review.md)。
+
+本规范只拥有模板与其结构约束，不重新定义方案归属、正式采用权限或模型生成质量；这些行为分别由[大纲库](planning-library.md)、[写作交接](writer-handoff.md)和[写作协作](../writing/collaboration.md)规定。篇幅和场景数量是创作建议，不能因此宣称保存时已有自动阻断校验。用户自定义模板不在本轮范围内。
+
+## 术语与参与者
+
+- 条目层级：总纲（total）、卷纲（volume）、章节大纲（chapter）、细纲（detail）。
+- 正文模板：插入或生成到条目 body 的 Markdown；细纲的场景以连续编号的小节表示。
+- 身份元数据：条目文件 frontmatter 中的 schema、id、层级、版本、归属和状态，与文档自身的 Spec 元数据不同。
+- 作者/规划 Agent/提取流程填写模板，工作台显示结构问题；共享解析器为分析、采用与写作提供相同字段。
+
+## 输入与前置条件
+
+模板使用条目层级与标题；细纲创作需要所属章节大纲，提取需要对应章节原文。资料引用只能指向已存在的文件，不能为了填写模板编造路径；尚未提取素材时使用角色或地点名称。
+
+## 输出与可观察行为
+
+输出是以下四种层级的正文模板。细纲固定包含章节总览、连续场景及可选禁止事项；地点、角色资料/当前状态/外貌和服饰是按需小节。编辑界面的模板插入、生成提示和程序解析使用同一份细纲结构；模板外的小节会提示不会进入写作。
 
 ---
 
@@ -26,10 +53,10 @@ export type OutlineEntry = Readonly<{
   
   // 条目级别字段
   materialRefs?: readonly string[];
-  writingGuidance?: string;
-  references?: readonly OutlineReference[];
-  targetWords?: number;
-  analysis?: DetailAnalysis;  // 仅 detail
+  writingGuidance?: string;          // 细纲不用
+  references?: readonly OutlineReference[];  // 细纲不用
+  targetWords?: number;              // 细纲不用
+  analysis?: DetailAnalysis;         // 仅 detail
   
   body: string;
 }>;
@@ -43,7 +70,7 @@ export type OutlineEntry = Readonly<{
 
 ### 职责
 
-作品整体层面的故事方向、核心冲突、主题、主要阶段和结局方向。全局唯一，作为所有方案的共同纲领。
+作品整体层面的故事方向、核心冲突、主题、主要阶段和结局方向。每个方案一个，作为该方案的纲领；不同方案默认各有自己的总纲，经手动关联后才共用。
 
 ### 必需结构化字段
 
@@ -271,12 +298,13 @@ targetWords: 3000
 ```markdown
 # 剧情概要
 
-林默独自坐在书房里，<foreshadow id="fo-001" action="plant">突然感到一阵寒意</foreshadow>。
-他回忆起师父的警告，<foreshadow id="fo-002" action="reinforce">天机不可泄露</foreshadow>。
+林默独自坐在书房里，<!-- nb:foreshadow marker="fm-01" foreshadow="fo-001" action="plant" -->突然感到一阵寒意<!-- /nb:foreshadow marker="fm-01" -->。
+他回忆起师父的警告，<!-- nb:foreshadow marker="fm-02" foreshadow="fo-002" action="reinforce" -->天机不可泄露<!-- /nb:foreshadow marker="fm-02" -->。
 ```
 
-**标记语法**：
-- `<foreshadow id="伏笔ID" action="plant|reinforce|recover">内容</foreshadow>`
+**标记语法**（语义见 [foreshadowing.md](./foreshadowing.md)）：
+- `<!-- nb:foreshadow marker="标记ID" foreshadow="伏笔ID" action="plant|reinforce|recover" -->内容<!-- /nb:foreshadow marker="标记ID" -->`
+- `marker` 在章节内唯一，结束标记只带 `marker`
 - `action` 取值：`plant`（埋设）、`reinforce`（强化）、`recover`（回收）
 
 ### 约束规则
@@ -303,174 +331,154 @@ targetWords: 3000
 
 ### 职责
 
-依托章节大纲生成，对章节大纲进行细化和文本丰富。细纲是写作前的最后一级规划，包含具体的情节安排、对话意图、描写提示和写作约束。
+依托章节大纲生成，对章节大纲进行细化。细纲是写作前的最后一级规划，也是写作模块的直接输入。细纲的全部写作信息都写在正文里，界面只显示正文：章节总览、逐场景的字段与小节、禁止事项。写作模块如何使用这些内容见 [writing.collaboration](../writing/collaboration.md)。
 
-### 必需结构化字段
+2026-10-01 起采用本模板（第三版），frontmatter 不再有 `scenes`、`perspective`、`guides`，段落标注去掉。旧细纲不兼容，需要重新生成；解析旧文件时这些字段被忽略，下次保存时去掉。
+
+### 结构化字段
 
 ```yaml
 schema: nbook.outline-entry/v2
+id: ol-xxx
 kind: detail
-status: draft | adopted
-title: 第X章：[章节名] - 细纲
-parentId: [章节大纲ID]
-chapterId: [章节大纲ID]
-materialRefs:
-  - lorebook/character/protagonist.md
-  - lorebook/location/mansion.md
-writingGuidance: "第一人称视角，强调主角内心矛盾"
-references:
-  - path: lorebook/character/protagonist.md
-    locator: 童年创伤部分
-    purpose: 参考主角心理状态
-targetWords: 3000
-analysis:  # 细纲特有：偏差和冲突分析结果
-  reportId: report-123
-  planId: plan-a
-  sourceHash: sha256:...
-  contextHash: sha256:...
-  summary: 已审阅，与章节大纲一致
-  deviations: []
-  conflicts: []
-  resolutions: []
-
-# 新增：段落级别标注（未来功能）
-guides:
-  - id: g1
-    wordCount: 500
-    perspective: first
-    emotion: tense
-    customInstructions: 强调内心矛盾
-detailReferences:
-  - id: r1
-    sources:
-      - path: lorebook/character/protagonist.md
-        note: 参考童年创伤部分
+version: 0
+status: draft
+title: 第三章 夜访 - 细纲
+parentId: ol-chapter-xxx
+chapterId: ol-chapter-xxx
+materialRefs: [lorebook/character/lin-chen.md]   # 可选
+analysis: ...                                     # 正式采用时写入
 ```
+
+细纲不读取也不保存 `writingGuidance`、`references`、`targetWords`；这三项写在正文模板里。
 
 ### Body 内容模板
 
 ```markdown
-# 开场 (约500字)
+# 章节总览
 
-## 场景描述
-[详细的场景描写提示]
+- 章节标题：章节名称
+- 剧情概括：剧情的大致概括
+- 核心冲突：本章的核心矛盾或核心事件
+- 情绪基调：本章的情绪基调或情绪演变过程
+- 目标字数：整章正文的目标字数
 
-## 人物状态
-[人物的初始状态和情绪]
+# 章节细纲
 
-## 氛围营造
-[需要营造的氛围和情绪]
+## 场景1：场景名
 
----
+- 场景简述：
+- 字数要求：
+- 人称要求：
+- 情绪基调：
+- 剧情节奏：
 
-# 剧情展开 (约1500字)
+### 场景地点
 
-## 段落一：[小节名称]
+- 地点名称：
+- 具体位置：
+- 地点资料：[地点名称](已有地点主文件路径)
+- 与前文的衔接：
+- 本场景相关条件：
 
-**剧情**：[具体发生的事情]  
-**对话意图**：[如果有对话，说明对话的目的]  
-**描写重点**：[需要重点描写的内容]  
-**情绪基调**：[这一段的情绪]
+### 参与角色
 
-[可选：具体的细节提示]
+- 角色A：本场景中的目的
+  - 角色资料：[角色A](已有角色主文件路径)
+  - 当前状态：
+  - 外貌要求：
 
-## 段落二：[小节名称]
+### 角色服饰与外观状态
 
-**剧情**：[具体发生的事情]  
-**对话意图**：[如果有对话，说明对话的目的]  
-**描写重点**：[需要重点描写的内容]  
-**情绪基调**：[这一段的情绪]
+- 角色A：延续前文或指定穿着；相关外观状态；本场景变化。
 
-## 段落三：[小节名称]
+### 具体情节
 
-**剧情**：[具体发生的事情]  
-**转折点**：[如果有转折，说明转折的时机和方式]  
-**描写重点**：[需要重点描写的内容]
+1.
+2.
 
----
+### 描写
 
-# 高潮 (约800字)
+### 写作指导
 
-## 冲突爆发
-[冲突如何达到顶点]
+### 参考资料
 
-## 关键动作
-[关键的动作和决策]
+- [资料说明](lorebook/路径.md)
 
-## 情绪渲染
-[如何渲染高潮情绪]
+### 伏笔
 
----
+- 伏笔名称
+  - 标记：fm-01
+  - 状态：埋设
+  - 作用：伏笔在全书中的作用
+  - 效果：本章要达到的效果
 
-# 收尾 (约200字)
+## 场景2：场景名
 
-## 结果
-[事件的结果]
+……
 
-## 人物变化
-[人物状态的变化]
+# 禁止事项
 
-## 悬念
-[为下一章留下的悬念]
-
----
-
-# 写作提示
-
-- [提示1：具体的写作技巧或注意事项]
-- [提示2：需要避免的写作问题]
-- [提示3：与前后章节的衔接要点]
+- 本章不能出现的情节结果
 ```
 
-### Body 内标记（段落级别标注，新增功能）
+字段与小节的含义：
 
-细纲的 body 中可以使用段落级别的写作指导和参考文献标注：
+| 位置 | 必填 | 写作时的用途 |
+|---|---|---|
+| 总览「目标字数」 | 是 | 整章正文目标；各场景字数之和、整章字数都按上下 50% 衡量 |
+| 总览其他字段 | 否 | 进写手提示的章节总览 |
+| 「场景简述」 | 是 | 场景的效果要求，写手与审阅都以它为准 |
+| 「字数要求」「人称要求」 | 是 | 场景目标字数与人称 |
+| 「情绪基调」「剧情节奏」 | 否 | 进写手提示 |
+| 「参与角色」 | 否 | 每项 `角色：目的`，进写手提示 |
+| 「场景地点」 | 否 | 地点、具体位置、资料链接、移动衔接与相关条件；助手只展开情节实际使用的环境 |
+| 「角色服饰与外观状态」 | 否 | 按角色指定穿着、状态与变化，原文进写手提示；未指定变化时检查前文连续性 |
+| 「具体情节」 | 至少一条 | 逐条成为必须写到的要素；最后一条是场景的结尾落点 |
+| 「描写」「写作指导」 | 否 | 原文进写手提示 |
+| 「参考资料」 | 否 | 有链接的项由写作助手读取；没有链接的项是待补资料 |
+| 「伏笔」 | 否 | 每项认领一个章节大纲伏笔标记，见下文 |
+| 「禁止事项」 | 否 | 本章每个场景都带上，审阅逐条检查 |
 
-```markdown
-# 开场 (约500字)
+伏笔：
 
-## 场景描述
+- 「标记」必须是所属章节大纲里的伏笔标记 ID，「状态」必须与该标记的动作一致（埋设 `plant`、强化 `reinforce`、回收 `recover`）。
+- 写手只看到标记原文、状态和「效果」；「作用」只交给写作助手审阅，用来检查正文没有提前点明。
+- 章节大纲中没有分给任何场景的标记在写作前提示。
 
-<guide id="g1">雨水敲打着窗棂，林默独自坐在昏暗的书房里。烛火摇曳，照亮桌上那封陈旧的信笺。</guide>
-
-## 人物内心
-
-<reference id="r1">他回忆起师父临终前的警告：「天机不可泄露，否则反噬自身。」这句话一直萦绕在他心头，像一道无法解开的魔咒。</reference>
-```
-
-**标记语法**：
-- `<guide id="标注ID">段落内容</guide>` - 写作指导标注
-- `<reference id="标注ID">段落内容</reference>` - 参考文献标注
+禁止事项只限制情节走向：列出本章不能出现的情节结果，防止模型误读细纲导致剧情跑偏。文风和写法限制不写在这里，放进文风文件或场景的写作指导。
 
 ### 约束规则
 
-1. **必需章节**：开场、剧情展开、高潮、收尾
-2. **段落数量**：剧情展开建议 3-6 个段落
-3. **篇幅分配**：必须明确各部分的目标字数
-4. **必需字段**：`chapterId`（所属章节）、`materialRefs`、`writingGuidance`、`targetWords`
-5. **特有字段**：`analysis`（与章节大纲的偏差分析结果）
-6. **新增字段**（未来）：`guides`（段落级别写作指导）、`detailReferences`（段落级别参考文献）
-7. **保存前校验**：正式采用的细纲必须先运行与章节大纲的偏差和冲突分析
+草稿可以保存为不完整的结构；以下检查在编辑界面实时显示，并在偏差分析、正式采用与写作时执行，任何一项不满足都不能分析、采用或写作：
 
-### 素材索引继承规则
+1. 一级标题只能是「章节总览」「章节细纲」「禁止事项」，各至多一个，首个一级标题前没有内容。
+2. 有「章节总览」且写了正整数目标字数。
+3. 「章节细纲」下至少一个场景；场景标题为 `场景N` 或 `场景N：名称`，编号从 1 连续。
+4. 每个场景有场景简述、正整数字数要求、人称要求和至少一条具体情节。
+5. 每项伏笔有标记和合法状态；标记在所属章节大纲中存在，状态与标记动作一致。
 
-细纲的 `materialRefs` 默认继承所属章节大纲的索引，并可局部调整：
+以下只提示，不阻断：
 
-- **继承**：未声明的类别沿用章节大纲索引
-- **追加**：细纲自己声明的条目与继承结果取并集
-- **排除**：显式移除某个继承条目（需要在 frontmatter 中标注排除项）
-- **覆盖**：细纲声明了该类别时，用细纲的条目替换章节大纲在该类别的全部条目
+- 场景中模板以外的三级小节，或「章节细纲」与第一个场景之间的文字：内容不会交给写作。
+- 各场景字数之和与目标字数相差超过 50%。
+- 参考资料文件不可读或没有链接（写作前检查）。
+- 章节大纲的某个伏笔标记没有分给任何场景（写作前检查）。
+
+写作时一章只能有一份细纲；同一章有多份细纲时写作阻断。正式采用前必须先运行与章节大纲的偏差和冲突分析。
+
+检查实现在 `packages/neuro-book/shared/outline-detail-structure.ts`，大纲分析、正式采用、编辑界面与写作共用。
 
 ### Agent 生成提示
 
 生成细纲时，AI 应该：
-- 提供可直接用于写作的具体细节
-- 明确各段落的剧情、对话意图、描写重点
-- 分配具体字数到各部分（总和应接近 `targetWords`）
-- 包含写作技巧提示和注意事项
-- 标注需要参考的 lorebook 具体部分
+
+- 按模板写满章节总览，目标字数与章节大纲的篇幅要求一致
+- 按章节大纲的场景拆分 `## 场景N：名称`，每个场景写场景简述、字数要求、人称要求和编号的具体情节
+- 把章节大纲中的伏笔标记分给实际执行它的场景，写明状态、作用与效果
+- 禁止事项只写剧情结果，不写文风限制
+- 参考资料写成链接，没有来源时只写说明，不编造路径
 - 生成后必须运行与章节大纲的偏差分析
-- 如果使用段落级别标注，应该合理分配标注数量（不要过密）
 
 ---
 
@@ -483,12 +491,10 @@ detailReferences:
 | `parentId` | null | [总纲ID] | [卷纲ID] | [章节ID] | 必需 |
 | `chapterId` | null | null | null | [章节ID] | 仅 detail 需要 |
 | `materialRefs` | 可选 | 可选 | ✅ 必需 | ✅ 必需（可继承） | 素材清单 |
-| `writingGuidance` | ❌ | ❌ | ✅ 必需 | ✅ 必需 | 全局写作指导 |
-| `references` | ❌ | ❌ | 可选 | 可选 | 条目级别参考文献 |
-| `targetWords` | ❌ | 可选 | ✅ 必需 | ✅ 必需 | 目标字数 |
+| `writingGuidance` | ❌ | ❌ | ✅ 必需 | ❌ | 整章写作指导；细纲写在正文各场景 |
+| `references` | ❌ | ❌ | 可选 | ❌ | 参考文献；细纲写在正文各场景 |
+| `targetWords` | ❌ | 可选 | ✅ 必需 | ❌ | 目标字数；细纲写在正文章节总览 |
 | `analysis` | ❌ | ❌ | ❌ | ✅ 特有 | 偏差分析结果 |
-| `guides` | ❌ | ❌ | ❌ | 未来 | 段落级别写作指导 |
-| `detailReferences` | ❌ | ❌ | ❌ | 未来 | 段落级别参考文献 |
 
 ### Body 篇幅建议
 
@@ -497,7 +503,7 @@ detailReferences:
 | 总纲 | 1000-3000 字 | 需要完整表达故事结构，但不应过于细节 |
 | 卷纲 | 800-2000 字 | 需要清晰的阶段划分，但为章节留出空间 |
 | 章节大纲 | 500-1500 字 | 需要可执行的场景划分，但细节留给细纲 |
-| 细纲 | 与 `targetWords` 的 30-50% | 提供足够的细节指导，但不是正文本身 |
+| 细纲 | 每场景约 300-800 字 | 提供足够的细节指导，但不是正文本身 |
 
 ---
 
@@ -507,21 +513,21 @@ detailReferences:
 
 1. **必需字段检查**：根据 `kind` 检查必需字段是否存在
 2. **篇幅检查**：body 字数是否在建议范围内（警告级别）
-3. **章节结构检查**：body 中是否包含必需的 Markdown 标题（`# 核心冲突`、`# 章节目标` 等）
+3. **章节结构检查**：body 中是否包含必需的 Markdown 标题（`# 核心冲突`、`# 章节目标` 等）；细纲的场景结构检查在分析与采用时执行，见细纲约束规则
 4. **父子关系检查**：`parentId` 和 `chapterId` 是否指向正确的条目类型
-5. **伏笔标记检查**：`<foreshadow>` 标签格式是否正确，引用的伏笔 ID 是否存在
-6. **段落标注检查**（未来）：`<guide>` 和 `<reference>` 标签是否有对应的 frontmatter 元数据
+5. **伏笔标记检查**：`nb:foreshadow` 注释格式是否正确，引用的伏笔 ID 是否存在
 
 ### 细纲特殊校验
 
 细纲保存为"正式采用"状态时，必须额外执行：
 
-1. **偏差分析**：与所属章节大纲进行 AI 偏差和冲突分析
-2. **结果展示**：向用户展示偏差和冲突
-3. **确认流程**：
+1. **结构检查**：正文满足细纲约束规则，否则不能分析和采用
+2. **偏差分析**：与所属章节大纲进行 AI 偏差和冲突分析
+3. **结果展示**：向用户展示偏差和冲突
+4. **确认流程**：
    - 讨论模式：用户确认后才能保存
-   - 自动模式：可带警告保存并记录可撤销结果
-4. **analysis 字段**：保存分析结果到 `analysis` 字段
+   - 自动模式：不能绕过大纲库的结构、分析与采用门禁；正式采用权限按 [planning-library.md](planning-library.md) 执行
+5. **analysis 字段**：保存分析结果到 `analysis` 字段
 
 ---
 
@@ -571,23 +577,40 @@ detailReferences:
 
 ---
 
-## 九、未来扩展
+## 状态与转换
 
-### 段落级别标注系统
+模板本身无独立运行状态。草稿可以保存不完整的正文；结构满足要求后才允许进入细纲分析、正式采用和写作。条目的 draft/adopted 转换由大纲库合同管理，不由插入模板自动触发。
 
-细纲的段落级别标注功能（`<guide>` 和 `<reference>`）是规划中的未来功能，详见 [detail-writing-guide-annotation.md](./detail-writing-guide-annotation.md)。
+## 副作用与数据
 
-### 自定义模板
+插入模板只改变当前编辑正文，正式保存通过现有大纲领域操作。解析只读取正文，不修改角色、地点等基础素材；写作时的详细资料补充不回写原细纲。
 
-未来可以支持用户自定义各层级的模板结构，但默认模板应该保持稳定。
+## 失败与恢复
 
-### 模板版本
+无目标字数、无连续场景、缺少场景简述/字数/人称/具体情节等结构问题必须说明具体位置；用户修正后重新分析或发起写作。不可读资料在写作资料校验中处理，不能由生成模型猜测补齐。
 
-随着功能演进，模板可能需要升级。建议在模板定义中加入版本号，支持模板迁移。
+## 边界与兼容
+
+现有第三版细纲继续可读，新增地点、服饰和角色子字段不强制旧文档重生成。此前已退出的段落标注及 frontmatter guides/scenes/perspective 不作为现行模板输入。正文中的章节、场景标题和具体情节保留作者要求；新增资料补充及审核见写作协作合同。
+
+## 验收与 Smoke
+
+- 给定四种条目层级，工作台模板插入提供对应正文；总纲每方案一个，细纲绑定所属章节。
+- 给定含地点、服饰及角色缩进引用的细纲，解析得到对应字段，角色子字段不成为新角色，资料链接进入引用清单。
+- 给定缺少新增可选字段的第三版细纲，原字段解析结果保持有效。
+- 给定场景缺少必需字段或编号不连续，分析/采用/写作说明结构错误；草稿仍可保存后修正。
+
+## 证据
+
+批准依据：[大纲规划模块](../../proposals/outline-planning-module.md)、[细纲资料补充与审核](../../proposals/writing-detail-material-review.md)。当前维持 planned，不以元数据修复晋升成熟度。
+
+- 实现入口：[共享细纲解析与模板](../../../packages/neuro-book/shared/outline-detail-structure.ts)、[工作台表单模板](../../../packages/neuro-book/app/utils/outline/outline-entry-form.ts)、[提取提示](../../../packages/neuro-book/server/inspiration/extraction/outline-prompts.ts)。
+- 合同测试：[细纲结构测试](../../../packages/neuro-book/shared/outline-detail-structure.test.ts)、[表单测试](../../../packages/neuro-book/app/utils/outline/outline-entry-form.test.ts)、[提取校验测试](../../../packages/neuro-book/server/inspiration/extraction/outline-validation.test.ts)。
+- 验收记录：[资料补充任务](../../../.agents/works/w00019-writing-module/tasks/t18-detail-material-review/README.md)；真实模型效果由开发者后续验收。
 
 ---
 
 **参考文档**：
 - [outline-planning-module.md](../../proposals/outline-planning-module.md) - 大纲规划模块提案
-- [detail-writing-guide-annotation.md](./detail-writing-guide-annotation.md) - 细纲写作指导标注系统
-- [format.ts](../../packages/neuro-book/server/outline/format.ts) - OutlineEntry 类型定义
+- [旧细纲写作指导标注](../../../packages/neuro-book/docs/archived/reference/detail-writing-guide-annotation.md) - 已废弃，仅供历史查阅
+- [format.ts](../../../packages/neuro-book/server/outline/format.ts) - OutlineEntry 类型定义

@@ -64,6 +64,16 @@ taskId: t08-outline-workbench-ui
   - `OutlineRepository.readCanonicalFiles` 在缺少 manifest 时抛出 `OutlineTransactionError("NOT_INITIALIZED")`，路由映射为 409，只读入口仍不创建文件。
 - **证据**：新增 `useOutlineWorkbenchData.test.ts` 3 项（默认 `vitest.config.ts` 收集 `app/composables`，前端配置不收集），以及 `storage.test.ts` 的未初始化用例，均通过。补测时发现该 composable 未显式导入 `readonly`，只靠 Nuxt 自动导入才能运行，已补上导入。大纲前端 8 文件 30 项仍通过。浏览器人工验收未执行。
 
+## 2026-09-28 大纲库与伏笔库直接编辑
+
+- 目标：取消查看态与编辑态，大纲库各级条目和伏笔选中即直接编辑，正文用富文本，标注从浮动菜单操作，改动自动保存。
+- 新增：`OutlineRichTextEditor.vue`（富文本正文与标注浮动菜单）、`useOutlineAutosave.ts`（防抖保存、回显与冲突判断），以及 `OutlineEntryForm`、`OutlineLibraryPanel`、`OutlineForeshadowingPanel` 的同名 `.md`。
+- 重写：`OutlineEntryForm.vue`、`OutlineLibraryPanel.vue`、`OutlineForeshadowingPanel.vue`；`OutlineDetailAnnotations.vue` 增加当前标注高亮与聚焦。
+- 规格：`workbench-ui.md` 新增“大纲库与伏笔库的直接编辑”行为与验收条目；`planning-library.md`、`foreshadowing.md`、`detail-writing-guide-annotation.md`、大纲 `README.md` 同步。
+- 工作台合同测试的 CSS 变量提取不再把 BEM 修饰类（`marker--plant`）误判为变量；富文本编辑器中 4 个未定义变量改为 nb-ui token。
+- 验证：前端配置跑 `app/components/novel-ide/outline`、`app/utils/outline`、`app/components/markdown-studio`、`app/composables` 共 15 文件 89 项通过；默认配置跑 `useOutlineAutosave.test.ts` 3 项通过；应用 typecheck 通过（`NODE_OPTIONS=--max-old-space-size=12288`）。
+- 未验证：浏览器中的输入、浮动菜单、自动保存节奏，`390×844` 与浅色、深色主题下的布局。
+
 ## 当前未完成边界
 
 - 仍未在真实浏览器验证全屏尺寸、拖拽中线、Project 切换关闭重开、窄窗口不支持边界和审批/取消交互。

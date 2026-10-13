@@ -436,6 +436,8 @@ export const GlobalConfigDtoSchema = z.object({
     }).default({default: null, providers: []}),
     embedding: EmbeddingServiceConfigDtoSchema.partial().default({}),
     agent: z.object({
+        /** 全局摘要专用模型；为空时沿用摘要 Profile 或全局默认模型。 */
+        summarizerModelKey: NullableModelKeySchema,
         defaultProfileKey: z.object({
             novel: ProfileKeySchema.nullable().default(null),
             userAssets: ProfileKeySchema.nullable().default(null),
@@ -444,7 +446,7 @@ export const GlobalConfigDtoSchema = z.object({
         profileRuntimeDefaults: ProfileRuntimeSettingsPatchDtoSchema.default({}),
         profiles: ConfigAgentProfileMapDtoSchema,
         visibleModels: z.array(AgentVisibleModelConfigDtoSchema).default([]),
-    }).default({defaultProfileKey: {novel: null, userAssets: null}, profileModelDefaults: {}, profileRuntimeDefaults: {}, profiles: {}, visibleModels: []}),
+    }).default({summarizerModelKey: null, defaultProfileKey: {novel: null, userAssets: null}, profileModelDefaults: {}, profileRuntimeDefaults: {}, profiles: {}, visibleModels: []}),
     ui: UiConfigDtoSchema.default({
         themeId: DEFAULT_PRODUCT_THEME_ID,
         appearance: DEFAULT_PRODUCT_APPEARANCE,
@@ -470,6 +472,7 @@ export const GlobalConfigUpdateDtoSchema = z.object({
     }).optional(),
     embedding: EmbeddingServiceConfigDtoSchema.partial().optional(),
     agent: z.object({
+        summarizerModelKey: NullableModelKeySchema.optional(),
         defaultProfileKey: z.object({
             novel: ProfileKeySchema.nullable().default(null),
             userAssets: ProfileKeySchema.nullable().default(null),

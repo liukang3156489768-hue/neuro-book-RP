@@ -8,7 +8,13 @@ import {
     SHELL_FILES_VIEW,
 } from "nbook/app/utils/workbench/product-catalog";
 import {resolveWorkbenchViewFactory} from "nbook/app/utils/workbench/view-factories";
-import {SHELL_LEFT_CONTAINER, SHELL_PANEL_CONTAINER, SHELL_RIGHT_CONTAINER} from "nbook/app/utils/workbench/containers";
+import {
+    SHELL_LEFT_CONTAINER,
+    SHELL_PANEL_CONTAINER,
+    SHELL_RIGHT_CONTAINER,
+    WRITING_OUTLINE_CONTAINER,
+    WRITING_SESSION_CONTAINER,
+} from "nbook/app/utils/workbench/containers";
 import type {ContainerPlacementRecord, WorkbenchViewPlacementRecord} from "nbook/shared/storage/workbench-views";
 
 /**
@@ -144,20 +150,21 @@ describe("productWorkbenchRegistry", () => {
 });
 
 describe("resolveViewPresentation：容器落位与 Part 切片", () => {
-    it("三个 Part 各拿到自己的容器：只有还有成员的容器才有入口，左栏是文件树容器", () => {
+    it("三个 Part 各拿到自己的容器：只有还有成员的容器才有入口，左栏是文件树与写作大纲", () => {
         const presentation = productPresentation();
         const left = presentation.part("left");
 
         expect(left.partId).toBe("left");
         expect(left.problems).toEqual([]);
-        expect(left.containers.map((container) => container.containerId)).toEqual([SHELL_LEFT_CONTAINER.id]);
+        expect(left.containers.map((container) => container.containerId)).toEqual([SHELL_LEFT_CONTAINER.id, WRITING_OUTLINE_CONTAINER.id]);
         expect(left.activeContainerId).toBe(SHELL_LEFT_CONTAINER.id);
-        // 右栏与面板在产品清单里还没有视图：实际成员数为 0，因此没有入口（该区域是空 Switcher）。
-        expect(presentation.part("right").containers).toEqual([]);
-        expect(presentation.part("right").activeContainerId).toBeNull();
+        // 右栏只有写作会话有成员；Agent 容器与面板还没有视图，实际成员数为 0，因此没有入口。
+        expect(presentation.part("right").containers.map((container) => container.containerId)).toEqual([WRITING_SESSION_CONTAINER.id]);
+        expect(presentation.part("right").activeContainerId).toBe(WRITING_SESSION_CONTAINER.id);
         expect(presentation.part("panel").containers).toEqual([]);
         // 定义与记录原件都还在：查得到，只是没有入口。
         expect(presentation.container(SHELL_PANEL_CONTAINER.id)?.memberViewIds).toEqual([]);
+        expect(presentation.container(SHELL_RIGHT_CONTAINER.id)?.memberViewIds).toEqual([]);
     });
 
     it("容器切片带标题、图标、生效落位与两份落点清单", () => {
@@ -175,10 +182,12 @@ describe("resolveViewPresentation：容器落位与 Part 切片", () => {
         });
         expect(left.views.map((entry) => entry.view.id)).toEqual([SHELL_FILES_VIEW.id]);
         expect(left.hidden).toEqual([]);
-        expect(left.moveTargets.map((target) => target.containerId)).toEqual([
+        expect(left.moveTargets.map((target) => target.containerId).sort()).toEqual([
             SHELL_RIGHT_CONTAINER.id,
             SHELL_PANEL_CONTAINER.id,
-        ]);
+            WRITING_OUTLINE_CONTAINER.id,
+            WRITING_SESSION_CONTAINER.id,
+        ].sort());
         expect(left.containerMoveTargets.map((target) => target.location)).toEqual(["sidebar-right", "panel"]);
     });
 

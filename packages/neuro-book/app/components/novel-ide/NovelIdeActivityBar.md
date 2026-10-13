@@ -4,9 +4,9 @@
 
 # NovelIdeActivityBar
 
-主页面左侧的**产品活动栏**，是通用 `WorkbenchActivityBar` 的产品适配器：上半是**主侧栏容器的单选**（由页面按生效落位求值后传入），下半是 `createWorkbenchActivityItems` 给出的非容器命令（工具组 + 账户 / 设置），图标表、译文表与 `NovelIdeAccountMenu` 都在这一层适配。
+主页面左侧的**产品活动栏**，是通用 `WorkbenchActivityBar` 的产品适配器：上半是**主侧栏容器与角色工作台入口**，下半是 `createWorkbenchActivityItems` 给出的非容器命令（工具组 + 账户 / 设置），图标表、译文表与 `NovelIdeAccountMenu` 都在这一层适配。角色入口固定插在文件容器与大纲容器之间；它不是容器，不参与容器拖动。
 
-它**不新增也不删除任何产品入口**：`open-home` / `open-container` / `open-plot-workbench` / `open-world-engine` / `open-trace-viewer` / `open-history-inbox` / `open-settings` / `open-profile` / `open-admin` / `logout` 与接入前的真实命令一一对应（`open-tab` / `toggle-agent-panel` 是已退役的旧入口：工具视图归主侧栏容器，Agent 面板有自己的入口）。测量、溢出、卡片材质、每项 40px / 步距 44px 都在通用组件里，这一层只做取数与路由。
+它保留既有产品命令，并新增角色入口的 `open-characters` 路由：`open-home` / `open-container` / `open-characters` / `open-plot-workbench` / `open-world-engine` / `open-trace-viewer` / `open-history-inbox` / `open-settings` / `open-profile` / `open-admin` / `logout` 与各自宿主一一对应（`open-tab` / `toggle-agent-panel` 是已退役的旧入口：工具视图归主侧栏容器，Agent 面板有自己的入口）。测量、溢出、卡片材质、每项 40px / 步距 44px 都在通用组件里，这一层只做取数与路由。
 
 ## 依赖与可挂载性
 
@@ -25,11 +25,13 @@ type Props = {
     surfaceActive: boolean;
     userAssetsMode: boolean;
     currentUser: AuthUserDto | null;
+    charactersOpen?: boolean;
 };
 
 type Emits = {
     (e: "open-home"): void;
     (e: "open-container", containerId: string): void;
+    (e: "open-characters"): void;
     (e: "open-world-engine"): void;
     (e: "open-trace-viewer"): void;
     (e: "open-history-inbox"): void;
@@ -43,7 +45,7 @@ type Emits = {
 
 ## 与能力表的对应
 
-- `primary` ← `containers`（主侧栏当前生效的容器；条目 id 就是 containerId，`active` 只跟 `activeContainerId`）。
+- `primary` ← `containers`，并在 `nbook.outline` 前插入固定的 `characters` 入口（主侧栏当前生效的容器；容器条目 id 就是 containerId；角色工作台打开时容器选中态全部关闭，保证角色入口与容器入口互斥，角色 active 由 `charactersOpen` 控制）。
 - `secondary` ← `createWorkbenchActivityItems().tools`（`home` / `plot` / `world` / `trace` / `history`，放不下从尾部进 More）。
 - `footer` ← `createWorkbenchActivityItems().footer`（`account` / `settings`）；`account` 由插槽替换成账户菜单，`settings` 仍走默认图标按钮。
 - 容器条目点击回传 `open-container`；**重复点击当前项**的语义（保持选择并显式打开被隐藏 / 拖收起的主侧栏）归页面命令，组件不切成 null。

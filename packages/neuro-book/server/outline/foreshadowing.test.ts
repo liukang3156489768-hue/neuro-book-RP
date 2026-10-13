@@ -134,9 +134,11 @@ describe("伏笔状态按方案线路图格号派生", () => {
     it("各方案分别判定：另一方案的埋设不能授权本方案的回收", async () => {
         const fixture = new PlanningFixture();
         const foreshadowId = adoptedForeshadowing(fixture);
-        const totalId = fixture.library({kind: "create-total", title: "总纲", body: "开端"}).entryId!;
-        const plans = ["甲", "乙"].map((title) => fixture.library({kind: "create-plan", title}).planId!);
+        // 两个方案各有自己的总纲，章节挂在各自总纲下。
+        const created = ["甲", "乙"].map((title) => fixture.library({kind: "create-plan", title}));
+        const plans = created.map(({planId}) => planId!);
         const chain = async (planId: string, actions: readonly (readonly [string, Action])[]) => {
+            const totalId = created[plans.indexOf(planId)]!.entryId!;
             const nodeIds = [];
             for (const [index, [marker, action]] of actions.entries()) {
                 const entryId = fixture.adoptedChapter(planId, totalId, `${planId}-${marker}`, mark(foreshadowId, marker, action));

@@ -31,6 +31,10 @@ export type CreateAgentInput = {
     title?: string;
     currentProjectRoot?: string;
     parentSessionId?: number;
+    /** 内部模块会话继承的不可变全局提示词快照；不暴露给创建会话 HTTP 请求。 */
+    promptSnapshotId?: string;
+    /** 无根聊天的旧工作流必须使用内置提示，不能读取最新用户预设。 */
+    promptSnapshotMode?: "active" | "builtin";
     /** session 类别（D15）：workflow 创建的参与者/run session 标注用；缺省 = chat。 */
     kind?: "chat" | "workflow" | "system";
     /** 寻址标签（D15）：workflow acquire 按 (profileKey, tag) 跨 run 复用等场景。 */

@@ -14,8 +14,15 @@ export type OutlineWorkbenchEntry = Readonly<{
     writingGuidance?: string;
     references?: readonly OutlineWorkbenchReference[];
     targetWords?: number;
+    materialUpdates?: readonly OutlineWorkbenchMaterialUpdate[];
     /** 细纲偏差分析记录；编辑后服务端清除，采用前必须重新分析。 */
     analysis?: OutlineWorkbenchDetailAnalysis;
+}>;
+
+export type OutlineWorkbenchMaterialUpdate = Readonly<{
+    materialPath: string;
+    kind: "experience" | "relationship" | "item" | "location";
+    body: string;
 }>;
 
 export type OutlineWorkbenchDetailAnalysis = Readonly<{
@@ -75,9 +82,8 @@ export type OutlineWorkbenchGraph = Readonly<{
 export type OutlineWorkbenchSnapshot = Readonly<{
     manifest: Readonly<{
         revision: number;
-        totalId: string | null;
-        /** 挂载关系只用于展示共享与父级，写入资格仍由服务端动作判定。 */
-        plans: readonly Readonly<{id: string; title: string; placements: readonly Readonly<{entryId: string; parentId: string | null; position: number}>[]}>[];
+        /** 挂载关系只用于展示共享与父级，写入资格仍由服务端动作判定；totalId 是该方案自己的总纲。 */
+        plans: readonly Readonly<{id: string; title: string; totalId: string; placements: readonly Readonly<{entryId: string; parentId: string | null; position: number}>[]}>[];
     }>;
     entries: readonly Readonly<{path: string; contentHash: string; value: OutlineWorkbenchEntry}>[];
     foreshadowing: readonly Readonly<{path: string; contentHash: string; value: OutlineWorkbenchForeshadowingDefinition}>[];

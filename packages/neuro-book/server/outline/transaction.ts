@@ -1,9 +1,10 @@
 import {createHash, randomUUID} from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import {isAdaptationRecordPath} from "./adaptation-path";
 
 export type OutlineFileMutation = Readonly<{
-    /** 仅允许 outline/ 下的规范文件，使用正斜杠相对路径。 */
+    /** 仅允许 outline/ 规范文件与已存在素材下受限的改编记录，使用正斜杠相对路径。 */
     relativePath: string;
     content: string | null;
     /** undefined 表示由事务在开始时捕获；null 表示目标应不存在。 */
@@ -188,6 +189,7 @@ export async function publishOutlineFiles(
                 }
                 await options.beforePublishFile?.(file.relativePath);
                 await assertAbsentPaths(options);
+                await resolveOutlinePath(options.projectRoot, file.relativePath);
                 const latest = await readFileIfExists(target);
                 if ((latest === null ? null : hashBytes(latest)) !== file.beforeHash) {
                     throw new OutlineTransactionError("CAS_CONFLICT", `规划文件版本已变化：${file.relativePath}`);
@@ -419,19 +421,22 @@ function hashBytes(content: Uint8Array): string {
 
 function normalizeMutations(mutations: readonly OutlineFileMutation[]): OutlineFileMutation[] {
     const byPath = new Map<string, OutlineFileMutation>();
+    const folded = new Set<string>();
     for (const mutation of mutations) {
         const relativePath = normalizeOutlinePath(mutation.relativePath);
-        if (byPath.has(relativePath)) {
+        const foldedPath = relativePath.toLocaleLowerCase("en-US");
+        if (folded.has(foldedPath)) {
             throw new OutlineTransactionError("INVALID_PATH", `规划事务包含重复文件：${relativePath}`);
         }
         byPath.set(relativePath, {...mutation, relativePath});
+        folded.add(foldedPath);
     }
     return [...byPath.values()].sort((left, right) => left.relativePath.localeCompare(right.relativePath));
 }
 
 function normalizeOutlinePath(relativePath: string): string {
     const normalized = relativePath.replaceAll("\\", "/").replace(/^\/+|\/+$/gu, "");
-    if (!normalized.startsWith("outline/") || normalized.includes("..") || normalized.includes("//")) {
+    if ((!normalized.startsWith("outline/") && !isAdaptationRecordPath(normalized)) || normalized.includes("..") || normalized.includes("//")) {
         throw new OutlineTransactionError("INVALID_PATH", `规范文件路径非法：${relativePath}`);
     }
     return normalized;
@@ -453,7 +458,18 @@ export async function resolveOutlinePath(projectRoot: string, relativePath: stri
             throw error;
         });
         if (stat?.isSymbolicLink()) throw new OutlineTransactionError("INVALID_PATH", `规划文件路径不能经过符号链接：${relativePath}`);
+        if (stat?.isFile() && stat.nlink !== 1) throw new OutlineTransactionError("INVALID_PATH", `规划文件不能是硬链接：${relativePath}`);
         if (stat === null) break;
+    }
+    if (isAdaptationRecordPath(normalized)) {
+        const base = path.join(root, ...normalized.split("/").slice(0, 3), "index.md");
+        const stat = await fs.lstat(base).catch((error: NodeJS.ErrnoException) => {
+            if (isMissing(error)) return null;
+            throw error;
+        });
+        if (!stat?.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) {
+            throw new OutlineTransactionError("INVALID_PATH", "改编记录只能写入真实存在的素材目录，请先到设计工作台创建素材");
+        }
     }
     return target;
 }

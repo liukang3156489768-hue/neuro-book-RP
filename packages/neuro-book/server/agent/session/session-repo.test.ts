@@ -8,6 +8,7 @@ import {JsonlSessionRepository} from "nbook/server/agent/session/session-repo";
 import {AgentSessionNotFoundError, isAgentSessionNotFoundError} from "nbook/server/agent/session/session-not-found-error";
 import {createAssistantTextMessage, createTextToolResult} from "nbook/server/agent/messages/message-utils";
 import type {Usage} from "nbook/server/agent/messages/types";
+import {estimateStoredContextTokens} from "nbook/server/agent/messages/stored-message-tokens";
 import {absoluteFsPath, type AbsoluteFsPath} from "nbook/server/runtime/paths/file-path";
 
 function usage(input: number, output: number, cacheRead = 0, cacheWrite = 0): Usage {
@@ -364,6 +365,24 @@ describe("JsonlSessionRepository", () => {
             output: 22,
             totalTokens: 132,
         });
+    });
+
+    it("压缩后的旧缓存用量失效，累计费用和后续Provider用量仍保留", async () => {
+        const session = await repo.createSession({profileKey: "outline.planner", initial: {}});
+        const retained = await repo.appendMessage(session.metadata.sessionId, createAssistantTextMessage({
+            text: "保留最新规划决定", usage: usage(469, 1_536, 865_024),
+        }));
+        await repo.appendEntry(session.metadata.sessionId, {
+            type: "compaction", summary: "此前规划摘要", firstKeptEntryId: retained.id, tokensBefore: 867_029,
+        });
+        const compressed = await repo.readSession(session.metadata.sessionId);
+        expect(estimateStoredContextTokens(repo.reduce(compressed).messages).tokens).toBeLessThan(100);
+        expect(repo.summary(compressed).usage?.cacheRead).toBe(865_024);
+        expect(compressed.entries.find(entry => entry.id === retained.id)).toMatchObject({message: {usage: {cacheRead: 865_024}}});
+        await repo.appendMessage(session.metadata.sessionId, createAssistantTextMessage({text: "继续规划", usage: usage(2_000, 100)}));
+        const resumed = await repo.readSession(session.metadata.sessionId);
+        expect(estimateStoredContextTokens(repo.reduce(resumed).messages).tokens).toBe(2_100);
+        expect(repo.summary(resumed).usage?.totalTokens).toBe(869_129);
     });
 
     it("session 列表支持 profile、状态、关系和数量筛选", async () => {

@@ -2,11 +2,13 @@ import {
     contentHash,
     parseForeshadowMarkers,
     type OutlineId,
+    type OutlineMaterialUpdate,
 } from "./format";
-import {OutlineLibraryError, prepareLibraryAction, type LibraryAction, type LibraryChange} from "./library";
+import {OutlineLibraryError, assertMaterialUpdateMaintenance, prepareLibraryAction, type LibraryAction, type LibraryChange} from "./library";
 import type {PlanningMarkerIssue, PlanningSnapshot} from "./index";
 
-export type ForeshadowingSuggestionAction = "strengthen" | "resolve" | "repair";
+/** plant 埋设、strengthen 强化、resolve 回收，分别要求候选正文含对应动作的标记；repair 只用于已诊断出损坏标记的章节。 */
+export type ForeshadowingSuggestionAction = "plant" | "strengthen" | "resolve" | "repair";
 
 export type ForeshadowingMarkerSuggestionInput = Readonly<{
     action: ForeshadowingSuggestionAction;
@@ -17,6 +19,7 @@ export type ForeshadowingMarkerSuggestionInput = Readonly<{
     expectedVersion: number;
     expectedContentHash: string;
     body: string;
+    materialUpdates?: readonly OutlineMaterialUpdate[] | null;
     rationale: string;
 }>;
 
@@ -29,13 +32,14 @@ export type ForeshadowingMarkerRepairAction = Readonly<{
     expectedVersion: number;
     expectedContentHash: string;
     body: string;
+    materialUpdates?: readonly OutlineMaterialUpdate[] | null;
 }>;
 
 export type PreparedForeshadowingMarkerSuggestion = Readonly<{
     suggestion: Readonly<{
         suggestionId: string;
         foreshadowingId: OutlineId;
-        action: "strengthen" | "resolve" | "repair";
+        action: ForeshadowingSuggestionAction;
         sourceEntryIds: readonly [OutlineId];
         rationale: string;
         confidence?: number;
@@ -76,6 +80,7 @@ export function prepareForeshadowingMarkerSuggestion(
     }
     if (!input.rationale.trim()) throw new OutlineLibraryError("伏笔建议必须说明理由");
     if (input.body === source.value.body) throw new OutlineLibraryError("伏笔建议没有正文变化");
+    assertMaterialUpdateMaintenance(source.value, input.body, input.materialUpdates);
     if (!snapshot.foreshadowing.some(({value}) => value.id === input.foreshadowingId)) {
         throw new OutlineLibraryError("伏笔定义不存在");
     }
@@ -86,7 +91,7 @@ export function prepareForeshadowingMarkerSuggestion(
 
     const knownForeshadowingIds = new Set(snapshot.foreshadowing.map(({value}) => value.id));
     const markers = parseForeshadowMarkers(input.body, knownForeshadowingIds, source.path);
-    const expectedAction = input.action === "strengthen" ? "reinforce" : input.action === "resolve" ? "recover" : null;
+    const expectedAction = MARKER_ACTION[input.action];
     if (expectedAction !== null && !markers.some((marker) => marker.foreshadowId === input.foreshadowingId
         && marker.action === expectedAction)) {
         throw new OutlineLibraryError(`候选正文没有 ${expectedAction} 伏笔标记`);
@@ -100,6 +105,7 @@ export function prepareForeshadowingMarkerSuggestion(
         expectedContentHash: input.expectedContentHash,
         title: source.value.title,
         body: input.body,
+        ...(input.materialUpdates === undefined ? {} : {materialUpdates: input.materialUpdates}),
     };
     const suggestionId = suggestionIdFor({
         action: input.action,
@@ -110,6 +116,7 @@ export function prepareForeshadowingMarkerSuggestion(
         expectedVersion: input.expectedVersion,
         expectedContentHash: input.expectedContentHash,
         body: input.body,
+        ...(input.materialUpdates === undefined ? {} : {materialUpdates: input.materialUpdates}),
         rationale: input.rationale.trim(),
     });
     return {
@@ -166,8 +173,13 @@ export function prepareForeshadowingMarkerRepair(
         expectedContentHash: input.expectedContentHash,
         title: source.value.title,
         body: input.body,
+        ...(input.materialUpdates === undefined ? {} : {materialUpdates: input.materialUpdates}),
     });
 }
+
+const MARKER_ACTION: Readonly<Record<ForeshadowingSuggestionAction, "plant" | "reinforce" | "recover" | null>> = {
+    plant: "plant", strengthen: "reinforce", resolve: "recover", repair: null,
+};
 
 function suggestionIdFor(input: ForeshadowingMarkerSuggestionInput): string {
     const digest = contentHash(JSON.stringify(input)).slice("sha256:".length, "sha256:".length + 24);

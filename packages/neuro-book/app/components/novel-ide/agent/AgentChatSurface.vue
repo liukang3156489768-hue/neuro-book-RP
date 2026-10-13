@@ -18,6 +18,7 @@ import {applyAgentCommandResult} from "nbook/app/components/novel-ide/agent/agen
 import {useAgentSessionApi} from "nbook/app/composables/useAgentSessionApi";
 import {useCostDisplay} from "nbook/app/composables/useCostDisplay";
 import AgentSidebarView from "./AgentSidebarView.vue";
+import AgentCompactionStatus from "./AgentCompactionStatus.vue";
 import type {
     AgentSidebarHeaderProps,
     AgentSidebarFlowProps,
@@ -4406,6 +4407,7 @@ const sidebarContextInspectorProps = computed<AgentSidebarContextInspectorProps>
         :class="[props.layout === 'workbench' ? 'border-x border-[var(--border-color)]' : '', props.active ? '' : 'pointer-events-none opacity-0']"
         :aria-hidden="!props.active"
     >
+        <AgentCompactionStatus :state="session.compaction.value" />
         <AgentSidebarView
             ref="sidebarViewRef"
             :layout="props.layout"

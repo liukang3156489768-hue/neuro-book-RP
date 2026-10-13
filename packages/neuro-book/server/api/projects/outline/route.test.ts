@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
     open: vi.fn(), snapshot: vi.fn(), publish: vi.fn(), undo: vi.fn(),
     previewObject: vi.fn(), removeObject: vi.fn(), previewPlacement: vi.fn(), removePlacement: vi.fn(),
     previewPlan: vi.fn(), removePlan: vi.fn(), previewGraphDeletion: vi.fn(),
-    analyzeLine: vi.fn(), fixLine: vi.fn(), inspectLine: vi.fn(), readFixedLine: vi.fn(), readWriterContext: vi.fn(),
+    analyzeLine: vi.fn(), fixLine: vi.fn(), inspectLine: vi.fn(), readFixedLine: vi.fn(), readWriterChapters: vi.fn(), readWriterChapterContext: vi.fn(),
     libraryAction: vi.fn(), lineAction: vi.fn(), repairMissing: vi.fn(), repairForeshadowing: vi.fn(), foreshadowingAction: vi.fn(), forkEntry: vi.fn(), generateDirection: vi.fn(), analyzeDetail: vi.fn(), adoptDetail: vi.fn(),
 }));
 vi.mock("nbook/server/api/projects/project-control-plane", () => ({requireProjectRefQuery: () => ({})}));
@@ -38,7 +38,8 @@ vi.mock("nbook/server/outline/host", () => ({
     fixReadyLine: mocks.fixLine,
     inspectReadyLine: mocks.inspectLine,
     readReadyFixedLineNodes: mocks.readFixedLine,
-    readReadyWriterOutlineContext: mocks.readWriterContext,
+    readReadyWriterChapterDirectory: mocks.readWriterChapters,
+    readReadyWriterChapterContext: mocks.readWriterChapterContext,
     previewReadyGraphDeletion: mocks.previewGraphDeletion,
     applyReadyForeshadowingAction: mocks.foreshadowingAction,
     forkReadyLibraryEntry: mocks.forkEntry,
@@ -170,7 +171,7 @@ describe("Project outline HTTP storage routes", () => {
         ]})).rejects.toThrow();
     });
     it("requires a separate preview and revision for plan removal", async () => {
-        mocks.previewPlan.mockResolvedValue({revision: 3, impact: {planId: "plan-a", objectFilesRemain: true}});
+        mocks.previewPlan.mockResolvedValue({revision: 3, impact: {planId: "plan-a", objectFilesRemain: false}});
         await expect(request("POST", "preview-plan-removal", {planId: "plan-a"})).resolves.toMatchObject({revision: 3});
         expect(mocks.previewPlan).toHaveBeenCalledWith(expect.anything(), "plan-a");
         await expect(request("POST", "remove-plan", {planId: "plan-a"})).rejects.toThrow();
@@ -366,20 +367,32 @@ describe("线路审阅和固定 HTTP 边界", () => {
         mocks.readFixedLine.mockResolvedValue({nodes: [{entryId: "ol-root"}]});
         await expect(request("POST", "read-fixed-line", base)).resolves.toHaveProperty("nodes");
         expect(mocks.readFixedLine).toHaveBeenCalledWith(expect.anything(), base);
-        await expect(request("POST", "read-writer-context", {...base, draft: true})).rejects.toThrow();
-        expect(mocks.readWriterContext).not.toHaveBeenCalled();
-        mocks.readWriterContext.mockRejectedValueOnce(new (await import("nbook/server/outline/line-planning")).OutlineLineError("线路失效"));
-        await expect(request("POST", "read-writer-context", base)).rejects.toMatchObject({statusCode: 422});
-        mocks.readWriterContext.mockResolvedValueOnce({lineId: base.lineId, nodes: [{body: "正式章节"}]});
-        await expect(request("POST", "read-writer-context", base)).resolves.toHaveProperty("nodes.0.body", "正式章节");
-        expect(mocks.readWriterContext).toHaveBeenCalledWith(expect.anything(), base);
+    });
+    it("正文写作交接按写作方案与章节读取，严格校验依据与素材路径", async () => {
+        const hash = "sha256:" + "0".repeat(64);
+        await expect(request("POST", "read-writer-chapters", {planId: "plan-a", lineId: "ln-main"})).rejects.toThrow();
+        mocks.readWriterChapters.mockResolvedValueOnce({planId: "plan-a", chapters: [{entryId: "ol-chapter", writable: true}]});
+        await expect(request("POST", "read-writer-chapters", {planId: "plan-a"})).resolves.toHaveProperty("chapters.0.writable", true);
+        expect(mocks.readWriterChapters).toHaveBeenCalledWith(expect.anything(), {planId: "plan-a"});
+        const input = {planId: "plan-a", chapterEntryId: "ol-chapter"};
+        for (const invalid of [{...input, lineId: "ln-main"}, {...input, chapterEntryId: "../outside"},
+            {...input, expectedBasis: {chapterVersion: 1, chapterContentHash: "bad", details: []}},
+            {...input, materialPaths: ["lorebook/hero.md", "lorebook/hero.md"]}, {...input, materialPaths: []}]) {
+            await expect(request("POST", "read-writer-chapter-context", invalid)).rejects.toThrow();
+        }
+        expect(mocks.readWriterChapterContext).not.toHaveBeenCalled();
+        mocks.readWriterChapterContext.mockRejectedValueOnce(new (await import("nbook/server/outline/line-planning")).OutlineLineError("章节不可写"));
+        await expect(request("POST", "read-writer-chapter-context", input)).rejects.toMatchObject({statusCode: 422});
+        const expectedBasis = {chapterVersion: 2, chapterContentHash: hash, details: [{entryId: "ol-detail", version: 1, contentHash: hash}]};
+        mocks.readWriterChapterContext.mockResolvedValueOnce({chapter: {body: "正式章节"}, basisChanged: false});
+        await expect(request("POST", "read-writer-chapter-context", {...input, expectedBasis}))
+            .resolves.toHaveProperty("chapter.body", "正式章节");
+        expect(mocks.readWriterChapterContext).toHaveBeenCalledWith(expect.anything(), {...input, expectedBasis});
         const selectedMaterials = ["lorebook/hero.md"];
-        mocks.readWriterContext.mockResolvedValueOnce({lineId: base.lineId, materials: [{path: selectedMaterials[0], content: "正式素材"}]});
-        await expect(request("POST", "read-writer-context", {...base, materialPaths: selectedMaterials}))
+        mocks.readWriterChapterContext.mockResolvedValueOnce({materials: [{path: selectedMaterials[0], content: "正式素材"}]});
+        await expect(request("POST", "read-writer-chapter-context", {...input, materialPaths: selectedMaterials}))
             .resolves.toHaveProperty("materials.0.content", "正式素材");
-        expect(mocks.readWriterContext).toHaveBeenCalledWith(expect.anything(), base, selectedMaterials);
-        await expect(request("POST", "read-writer-context", {...base, materialPaths: ["lorebook/hero.md", "lorebook/hero.md"]}))
-            .rejects.toThrow();
+        expect(mocks.readWriterChapterContext).toHaveBeenCalledWith(expect.anything(), input, selectedMaterials);
     });
     it("丢失条目修复请求严格校验 hash 与明确确认，不再接受节点替换映射", async () => {
         const hash = "sha256:" + "0".repeat(64);

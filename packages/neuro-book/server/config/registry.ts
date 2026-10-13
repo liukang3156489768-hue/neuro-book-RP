@@ -52,6 +52,14 @@ export const CONFIG_REGISTRY: ConfigItemMeta[] = [
         description: "嵌入服务 API Key，只在设置页展示脱敏状态。",
     },
     {
+        key: "agent.summarizerModelKey",
+        scope: "global",
+        effect: "next-run",
+        merge: "replace",
+        secret: false,
+        description: "上下文摘要专用模型 key；为空时使用摘要 Profile 或全局默认模型。",
+    },
+    {
         key: "agent.defaultProfileKey",
         scope: "global-workspace",
         effect: "next-session",

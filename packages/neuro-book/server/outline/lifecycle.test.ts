@@ -7,11 +7,12 @@ import {closeAllProjects, closeProject, openProject, ProjectNotOpenError, requir
 import {PROJECT_HISTORY_MODULE_TOKEN} from "nbook/server/workspace-history/project-history";
 import {projectWorkspaceRef} from "nbook/server/workspace-files/project-identity";
 import {contentHash, createEmptyManifest, serializeEntryMarkdown, serializeManifest, type OutlineId} from "./format";
+import {sceneDetail} from "./detail.fixture";
 import {adoptReadyDetail, analyzeReadyDetail, analyzeReadyLine, applyReadyLibraryAction, applyReadyLineAction, fixReadyLine, forkReadyLibraryEntry, openProjectPlanning, publishProjectPlanning, previewReadyPlanningObjectDeletion, previewReadyPlanningPlacementRemoval, previewReadyPlanningPlanRemoval, removeReadyPlanningObject, removeReadyPlanningPlacement, removeReadyPlanningPlan, undoProjectPlanning, undoReadyPlanningFiles} from "./host";
 
-// 细纲与线路分析共用模型入口但结果 schema 不同，按系统提示区分以走真实固定流程。
+// 细纲与线路分析共用模型入口，但请求用途和结果 schema 不同。
 vi.mock("./direction-model", () => ({completeDirectionWithModel: vi.fn(async (_ready: unknown, _prompt: string, _signal: unknown, system?: string) =>
-    JSON.stringify(system?.includes("线路语义审查")
+    JSON.stringify(system === "outline.line-analysis"
         ? {summary: "内容一致", conflicts: []}
         : {summary: "内容一致", deviations: [], conflicts: []}))}));
 
@@ -83,7 +84,7 @@ describe("outline real Project lifecycle", () => {
         expect((await openProjectPlanning(ref)).manifest.revision).toBe(0);
     });
 
-    it("requires a separate total-outline confirmation and restores the deletion through History-owned Project", async () => {
+    it("总纲仍被方案使用时拒绝删除；孤立总纲须单独二次确认，并可经 History 撤销", async () => {
         const root = await createTestTmpRoot("outline-lifecycle", "outline-total-confirmation");
         roots.push(root);
         const workspaceRoot = absoluteFsPath(path.join(root, "workspace"));
@@ -93,8 +94,16 @@ describe("outline real Project lifecycle", () => {
         const ref = projectWorkspaceRef("novel");
         const ready = await openProject(ref, {kind: "job", source: "outline-lifecycle-test"}, workspaceRoot);
         await openProjectPlanning(ref);
-        const {entryId: totalId} = await applyReadyLibraryAction(ready,
-            {kind: "create-total", title: "Total", body: "Total\n"}, 0, actor);
+        const {planId: planA, entryId: usedTotalId} = await applyReadyLibraryAction(ready,
+            {kind: "create-plan", title: "A"}, 0, actor);
+        const {planId: planB, entryId: totalId} = await applyReadyLibraryAction(ready,
+            {kind: "create-plan", title: "B"}, 1, actor);
+        // 乙改用甲的总纲后，乙原来的空总纲成为不属于任何方案的孤立条目。
+        await applyReadyLibraryAction(ready, {kind: "associate-total", planId: planB!, totalId: usedTotalId!}, 2, actor);
+        const usedPreview = await previewReadyPlanningObjectDeletion(ready, usedTotalId!);
+        expect(usedPreview.impact).toMatchObject({canDeleteObject: false, usedByPlanIds: [planA, planB], affectedPlanIds: [planA, planB]});
+        await expect(removeReadyPlanningObject(ready, usedTotalId!, usedPreview.revision, usedPreview.objectHash!, true, actor))
+            .rejects.toThrow(/仍被方案使用/);
         const before = await openProjectPlanning(ref);
         const source = before.entries.find(({value}) => value.id === totalId)!;
         const relativePath = source.path;
@@ -106,17 +115,19 @@ describe("outline real Project lifecycle", () => {
                     ? {...item, version: item.version + 1, contentHash: contentHash(changed)} : item)}),
             },
         ]}, actor)).rejects.toMatchObject({code: "PUBLISH_FAILED"});
-        expect((await openProjectPlanning(ref)).entries.find(({value}) => value.id === totalId)?.value.body).toBe("Total\n");
+        expect((await openProjectPlanning(ref)).entries.find(({value}) => value.id === totalId)?.value.body).toBe("");
         const preview = await previewReadyPlanningObjectDeletion(ready, totalId!);
-        expect(preview).toMatchObject({revision: 1, impact: {canDeleteObject: true}});
+        expect(preview).toMatchObject({revision: 3, impact: {canDeleteObject: true, usedByPlanIds: [], affectedPlanIds: []}});
         await expect(removeReadyPlanningObject(ready, totalId!, preview.revision, preview.objectHash!, false, actor))
             .rejects.toThrow(/二次确认/);
-        expect((await openProjectPlanning(ref)).manifest.totalId).toBe(totalId!);
+        expect((await openProjectPlanning(ref)).entries.some(({value}) => value.id === totalId)).toBe(true);
         const receipt = await removeReadyPlanningObject(ready, totalId!, preview.revision, preview.objectHash!, true, actor);
-        expect((await openProjectPlanning(ref)).manifest.totalId).toBeNull();
+        const removed = await openProjectPlanning(ref);
+        expect(removed.entries.some(({value}) => value.id === totalId)).toBe(false);
+        expect(removed.manifest.plans.map(({totalId: id}) => id)).toEqual([usedTotalId, usedTotalId]);
         await expect(fs.stat(path.join(projectRoot, relativePath))).rejects.toMatchObject({code: "ENOENT"});
         expect(await undoProjectPlanning(ref, receipt.transactionId, actor)).toMatchObject({kind: "undone"});
-        expect((await openProjectPlanning(ref)).manifest.totalId).toBe(totalId!);
+        expect((await openProjectPlanning(ref)).entries.some(({value}) => value.id === totalId)).toBe(true);
     });
     it("removes only a confirmed placement while retaining the shared object", async () => {
         const root = await createTestTmpRoot("outline-lifecycle", "outline-relation-removal");
@@ -128,11 +139,9 @@ describe("outline real Project lifecycle", () => {
         const ref = projectWorkspaceRef("novel");
         const ready = await openProject(ref, {kind: "job", source: "outline-lifecycle-test"}, workspaceRoot);
         await openProjectPlanning(ref);
-        const {entryId: totalId} = await applyReadyLibraryAction(ready,
-            {kind: "create-total", title: "Total", body: "Total\n"}, 0, actor);
-        const {planId} = await applyReadyLibraryAction(ready, {kind: "create-plan", title: "A"}, 1, actor);
+        const {planId, entryId: totalId} = await applyReadyLibraryAction(ready, {kind: "create-plan", title: "A"}, 0, actor);
         const {entryId: volumeId} = await applyReadyLibraryAction(ready,
-            {kind: "create-entry", planId: planId!, parentId: totalId!, entryKind: "volume", title: "Volume", body: "Volume\n"}, 2, actor);
+            {kind: "create-entry", planId: planId!, parentId: totalId!, entryKind: "volume", title: "Volume", body: "Volume\n"}, 1, actor);
         const volumePath = (await openProjectPlanning(ref)).entries.find(({value}) => value.id === volumeId)!.path;
         const volume = await fs.readFile(path.join(projectRoot, volumePath), "utf8");
         const preview = await previewReadyPlanningPlacementRemoval(ready, planId!, volumeId!);
@@ -145,7 +154,7 @@ describe("outline real Project lifecycle", () => {
         expect(await undoProjectPlanning(ref, receipt.transactionId, actor)).toMatchObject({kind: "undone"});
         expect((await openProjectPlanning(ref)).manifest.plans[0]?.placements).toHaveLength(2);
     });
-    it("预览删除方案保留条目文件，过期预览拒绝，重开后可跨 generation 撤销", async () => {
+    it("预览删除方案递归删除专属条目，过期预览拒绝，重开后可跨 generation 撤销", async () => {
         const root = await createTestTmpRoot("outline-lifecycle", "outline-plan-removal");
         roots.push(root);
         const workspaceRoot = absoluteFsPath(path.join(root, "workspace"));
@@ -157,21 +166,20 @@ describe("outline real Project lifecycle", () => {
         await openProjectPlanning(ref);
         const apply = async (action: Parameters<typeof applyReadyLibraryAction>[1]) =>
             applyReadyLibraryAction(ready, action, (await openProjectPlanning(ref)).manifest.revision, actor);
-        const {entryId: totalId} = await apply({kind: "create-total", title: "总纲", body: ""});
-        const {planId: planA} = await apply({kind: "create-plan", title: "甲"});
+        const {planId: planA, entryId: totalId} = await apply({kind: "create-plan", title: "甲"});
         const {planId: planB} = await apply({kind: "create-plan", title: "乙"});
         const {entryId: exclusiveId} = await apply({kind: "create-entry", planId: planA!, parentId: totalId!,
             entryKind: "chapter", title: "仅甲章", body: "原文"});
         const before = await openProjectPlanning(ref);
         const exclusive = before.entries.find(({value}) => value.id === exclusiveId)!;
-        const original = await fs.readFile(path.join(projectRoot, exclusive.path), "utf8");
         const preview = await previewReadyPlanningPlanRemoval(ready, planA!);
-        expect(preview.impact).toMatchObject({exclusiveEntryIds: [exclusiveId], objectFilesRemain: true, canRemovePlan: true});
+        // 甲的专属总纲和章节只属于甲，删除方案时一并递归删除；共享条目继续保留。
+        expect(preview.impact).toMatchObject({exclusiveEntryIds: [totalId, exclusiveId], objectFilesRemain: false, canRemovePlan: true});
         await expect(removeReadyPlanningPlan(ready, planA!, preview.revision - 1, actor)).rejects.toMatchObject({code: "CAS_CONFLICT"});
         expect((await openProjectPlanning(ref)).manifest.plans).toHaveLength(2);
         const removal = await removeReadyPlanningPlan(ready, planA!, preview.revision, actor);
         expect((await openProjectPlanning(ref)).manifest.plans.map(({id}) => id)).toEqual([planB]);
-        expect(await fs.readFile(path.join(projectRoot, exclusive.path), "utf8")).toBe(original);
+        await expect(fs.stat(path.join(projectRoot, exclusive.path))).rejects.toMatchObject({code: "ENOENT"});
         const history = await requireReadyModuleHandle(ready, PROJECT_HISTORY_MODULE_TOKEN).history;
         expect((await history!.timeline("outline/manifest.yaml")).at(-1)?.entry.actor).toEqual(actor);
         await closeProject(ref, "shutdown");
@@ -179,7 +187,7 @@ describe("outline real Project lifecycle", () => {
         expect((await openProjectPlanning(ref)).manifest.plans.map(({id}) => id)).toEqual([planB]);
         expect(await undoProjectPlanning(ref, removal.transactionId, actor)).toMatchObject({kind: "undone"});
         expect((await openProjectPlanning(ref)).manifest.plans.map(({id}) => id)).toEqual([planA, planB]);
-        expect(await fs.readFile(path.join(projectRoot, exclusive.path), "utf8")).toBe(original);
+        expect((await openProjectPlanning(ref)).entries.some(({value}) => value.id === exclusiveId)).toBe(true);
     });
     it("线路图节点引用的方案关系必须阻断移除，其他方案的共享关系仍可移除", async () => {
         const root = await createTestTmpRoot("outline-lifecycle", "outline-fixed-placement-guard");
@@ -193,8 +201,7 @@ describe("outline real Project lifecycle", () => {
         await openProjectPlanning(ref);
         const apply = async (action: Parameters<typeof applyReadyLibraryAction>[1]) =>
             applyReadyLibraryAction(ready, action, (await openProjectPlanning(ref)).manifest.revision, actor);
-        const {entryId: totalId} = await apply({kind: "create-total", title: "总纲", body: "故事"});
-        const {planId: planA} = await apply({kind: "create-plan", title: "方案甲"});
+        const {planId: planA, entryId: totalId} = await apply({kind: "create-plan", title: "方案甲"});
         const adoptChapter = async (title: string) => {
             const {entryId} = await apply({kind: "create-entry", planId: planA!, parentId: totalId!,
                 entryKind: "chapter", title, body: title + "内容"});
@@ -213,8 +220,8 @@ describe("outline real Project lifecycle", () => {
             .rejects.toThrow(/线路图/);
         expect((await openProjectPlanning(ref)).manifest.revision).toBe(exclusive.revision);
         // 线路图按方案隔离：另一方案挂载同一条目时没有节点引用，可以直接移除该关系。
-        const {planId: planB} = await apply({kind: "create-plan", title: "方案乙"});
-        await apply({kind: "attach-entry", planId: planB!, parentId: totalId!, entryId: chapterId});
+        const {planId: planB, entryId: totalB} = await apply({kind: "create-plan", title: "方案乙"});
+        await apply({kind: "attach-entry", planId: planB!, parentId: totalB!, entryId: chapterId});
         const shared = await previewReadyPlanningPlacementRemoval(ready, planB!, chapterId);
         expect(shared.impact).toMatchObject({blockingFixedLineIds: [], graphNodeIds: [], canRemovePlacement: true});
         await removeReadyPlanningPlacement(ready, planB!, chapterId, shared.revision, actor);
@@ -238,15 +245,14 @@ describe("outline real Project lifecycle", () => {
         await openProjectPlanning(ref);
         const apply = async (action: Parameters<typeof applyReadyLibraryAction>[1]) =>
             applyReadyLibraryAction(first, action, (await openProjectPlanning(ref)).manifest.revision, actor);
-        const {entryId: totalId} = await apply({kind: "create-total", title: "总纲", body: "故事"});
-        const {planId} = await apply({kind: "create-plan", title: "方案"});
+        const {planId, entryId: totalId} = await apply({kind: "create-plan", title: "方案"});
         const {entryId: chapterId} = await apply({kind: "create-entry", planId: planId!, parentId: totalId!,
             entryKind: "chapter", title: "第一章", body: "章节情节"});
         const chapter = (await openProjectPlanning(ref)).entries.find(({value}) => value.id === chapterId)!;
         await apply({kind: "adopt-entry", planId: planId!, entryId: chapterId!,
             expectedVersion: chapter.value.version, expectedContentHash: chapter.contentHash});
         const {entryId: detailId} = await apply({kind: "create-entry", planId: planId!, parentId: chapterId!,
-            entryKind: "detail", title: "细纲", body: "场景"});
+            entryKind: "detail", title: "细纲", ...sceneDetail("场景")});
         const initial = await openProjectPlanning(ref);
         const detail = initial.entries.find(({value}) => value.id === detailId)!;
         const request = {planId: planId!, entryId: detailId!, expectedRevision: initial.manifest.revision,
@@ -267,9 +273,9 @@ describe("outline real Project lifecycle", () => {
         expect(detailTimeline.map(({entry}) => entry.operation.type)).toEqual(["file.create", "file.edit"]);
         expect(detailTimeline.at(-1)?.entry.actor).toEqual(actor);
         expect((await history!.timeline("outline/manifest.yaml")).at(-1)?.entry.actor).toEqual(actor);
-        const {planId: unrelatedPlan} = await applyReadyLibraryAction(second,
+        const {planId: unrelatedPlan, entryId: unrelatedTotal} = await applyReadyLibraryAction(second,
             {kind: "create-plan", title: "独立方案"}, (await openProjectPlanning(ref)).manifest.revision, actor);
-        await applyReadyLibraryAction(second, {kind: "create-entry", planId: unrelatedPlan!, parentId: totalId!,
+        await applyReadyLibraryAction(second, {kind: "create-entry", planId: unrelatedPlan!, parentId: unrelatedTotal!,
             entryKind: "chapter", title: "独立章节", body: "不影响原方案"}, (await openProjectPlanning(ref)).manifest.revision, actor);
         expect((await openProjectPlanning(ref)).entries.find(({value}) => value.id === detailId)?.value.analysis?.reportId)
             .toBe(reissued.report.reportId);
@@ -283,17 +289,24 @@ describe("outline real Project lifecycle", () => {
             .toBe(reissued.report.reportId);
         await expect(applyReadyLibraryAction(reopened, {kind: "rename-plan", planId: planId!, title: "主方案"}, beforeRename, actor))
             .rejects.toMatchObject({code: "MANIFEST_REVISION_CONFLICT"});
-        const renamed = await applyReadyLibraryAction(reopened, {kind: "rename-plan", planId: planId!, title: "主方案"},
+        await applyReadyLibraryAction(reopened, {kind: "rename-plan", planId: planId!, title: "主方案"},
             (await openProjectPlanning(ref)).manifest.revision, actor);
+        const renamedPlan = await openProjectPlanning(ref);
+        expect(renamedPlan.manifest.plans.find(({id}) => id === planId)?.title).toBe("主方案");
+        // 方案标题不在细纲审阅的上游链内；改写所属章节大纲才撤回审阅。
+        expect(renamedPlan.entries.find(({value}) => value.id === detailId)?.value.analysis?.reportId).toBe(reissued.report.reportId);
+        const currentChapter = renamedPlan.entries.find(({value}) => value.id === chapterId)!;
+        const edited = await applyReadyLibraryAction(reopened, {kind: "edit-entry", planId: planId!, entryId: chapterId!,
+            expectedVersion: currentChapter.value.version, expectedContentHash: currentChapter.contentHash,
+            title: "第一章", body: "改写章节情节"}, renamedPlan.manifest.revision, actor);
         const updated = await openProjectPlanning(ref);
-        expect(updated.manifest.plans.find(({id}) => id === planId)?.title).toBe("主方案");
         expect(updated.entries.find(({value}) => value.id === detailId)?.value).toMatchObject({status: "draft"});
         expect(updated.entries.find(({value}) => value.id === detailId)?.value.analysis).toBeUndefined();
         expect((await history!.timeline(detail.path)).at(-1)?.entry.actor).toEqual(actor);
         await closeProject(ref, "shutdown");
-        await openProject(ref, {kind: "job", source: "outline-detail-rename-test"}, workspaceRoot);
+        await openProject(ref, {kind: "job", source: "outline-detail-edit-test"}, workspaceRoot);
         expect((await openProjectPlanning(ref)).entries.find(({value}) => value.id === detailId)?.value.status).toBe("draft");
-        await undoProjectPlanning(ref, renamed.transactionId, actor);
+        await undoProjectPlanning(ref, edited.transactionId, actor);
         expect((await openProjectPlanning(ref)).entries.find(({value}) => value.id === detailId)?.value.analysis?.reportId)
             .toBe(reissued.report.reportId);
     }, 20_000);
@@ -309,9 +322,8 @@ describe("outline real Project lifecycle", () => {
         await openProjectPlanning(ref);
         const apply = async (action: Parameters<typeof applyReadyLibraryAction>[1]) =>
             applyReadyLibraryAction(ready, action, (await openProjectPlanning(ref)).manifest.revision, actor);
-        const {entryId: totalId} = await apply({kind: "create-total", title: "总纲", body: "故事"});
-        const {planId: planA} = await apply({kind: "create-plan", title: "甲"});
-        const {planId: planB} = await apply({kind: "create-plan", title: "乙"});
+        const {planId: planA, entryId: totalId} = await apply({kind: "create-plan", title: "甲"});
+        const {planId: planB, entryId: totalB} = await apply({kind: "create-plan", title: "乙"});
         const {entryId: chapterId} = await apply({kind: "create-entry", planId: planA!, parentId: totalId!,
             entryKind: "chapter", title: "第一章", body: "事件"});
         const {entryId: nextId} = await apply({kind: "create-entry", planId: planA!, parentId: totalId!,
@@ -321,9 +333,9 @@ describe("outline real Project lifecycle", () => {
             await apply({kind: "adopt-entry", planId: planA!, entryId: id,
                 expectedVersion: chapter.value.version, expectedContentHash: chapter.contentHash});
         }
-        await apply({kind: "attach-entry", planId: planB!, parentId: totalId!, entryId: chapterId!});
+        await apply({kind: "attach-entry", planId: planB!, parentId: totalB!, entryId: chapterId!});
         const {entryId: detailId} = await apply({kind: "create-entry", planId: planA!, parentId: chapterId!,
-            entryKind: "detail", title: "片段", body: "行动"});
+            entryKind: "detail", title: "片段", ...sceneDetail("行动")});
         const before = await openProjectPlanning(ref);
         const detail = before.entries.find(({value}) => value.id === detailId)!;
         const request = {planId: planA!, entryId: detailId!, expectedRevision: before.manifest.revision,
@@ -356,8 +368,7 @@ describe("outline real Project lifecycle", () => {
         await openProjectPlanning(ref);
         const apply = async (action: Parameters<typeof applyReadyLibraryAction>[1]) =>
             applyReadyLibraryAction(ready, action, (await openProjectPlanning(ref)).manifest.revision, actor);
-        const {entryId: totalId} = await apply({kind: "create-total", title: "总纲", body: "故事"});
-        const {planId} = await apply({kind: "create-plan", title: "方案"});
+        const {planId, entryId: totalId} = await apply({kind: "create-plan", title: "方案"});
         const {entryId: volumeId} = await apply({kind: "create-entry", planId: planId!, parentId: totalId!,
             entryKind: "volume", title: "第一卷", body: "第一卷情节"});
         const {entryId: chapterId} = await apply({kind: "create-entry", planId: planId!, parentId: totalId!,
@@ -372,8 +383,8 @@ describe("outline real Project lifecycle", () => {
         const lineId = await fixChainLine(ready, ref, planId!, [chapterId!, nextId!], "固定章节");
         const adopted = (await openProjectPlanning(ref)).entries.find(({value}) => value.id === chapterId)!;
         const oldBytes = await fs.readFile(path.join(projectRoot, adopted.path), "utf8");
-        const {planId: secondPlan} = await apply({kind: "create-plan", title: "备用方案"});
-        await apply({kind: "attach-entry", planId: secondPlan!, parentId: totalId!, entryId: chapterId!});
+        const {planId: secondPlan, entryId: secondTotal} = await apply({kind: "create-plan", title: "备用方案"});
+        await apply({kind: "attach-entry", planId: secondPlan!, parentId: secondTotal!, entryId: chapterId!});
         await expect(apply({kind: "move-entry", planId: planId!, entryId: chapterId!, parentId: volumeId!,
             expectedVersion: adopted.value.version, expectedContentHash: adopted.contentHash})).rejects.toThrow(/共享/);
         expect(await fs.readFile(path.join(projectRoot, adopted.path), "utf8")).toBe(oldBytes);
@@ -411,21 +422,19 @@ describe("outline real Project lifecycle", () => {
         const ref = projectWorkspaceRef("novel");
         const ready = await openProject(ref, {kind: "job", source: "outline-lifecycle-test"}, workspaceRoot);
         await openProjectPlanning(ref);
-        const {entryId: totalId} = await applyReadyLibraryAction(ready,
-            {kind: "create-total", title: "总纲", body: "起点"}, 0, actor);
-        const {planId: planA} = await applyReadyLibraryAction(ready, {kind: "create-plan", title: "A"}, 1, actor);
-        const {planId: planB} = await applyReadyLibraryAction(ready, {kind: "create-plan", title: "B"}, 2, actor);
+        const {planId: planA, entryId: totalId} = await applyReadyLibraryAction(ready, {kind: "create-plan", title: "A"}, 0, actor);
+        const {planId: planB, entryId: totalB} = await applyReadyLibraryAction(ready, {kind: "create-plan", title: "B"}, 1, actor);
         const {entryId: chapterId} = await applyReadyLibraryAction(ready,
-            {kind: "create-entry", planId: planA!, parentId: totalId!, entryKind: "chapter", title: "章节", body: "进展"}, 3, actor);
+            {kind: "create-entry", planId: planA!, parentId: totalId!, entryKind: "chapter", title: "章节", body: "进展"}, 2, actor);
         const {entryId: detailId} = await applyReadyLibraryAction(ready,
-            {kind: "create-entry", planId: planA!, parentId: chapterId!, entryKind: "detail", title: "细纲", body: "初稿"}, 4, actor);
-        await applyReadyLibraryAction(ready, {kind: "attach-entry", planId: planB!, parentId: totalId!, entryId: chapterId!}, 5, actor);
-        await applyReadyLibraryAction(ready, {kind: "attach-entry", planId: planB!, parentId: chapterId!, entryId: detailId!}, 6, actor);
+            {kind: "create-entry", planId: planA!, parentId: chapterId!, entryKind: "detail", title: "细纲", body: "初稿"}, 3, actor);
+        await applyReadyLibraryAction(ready, {kind: "attach-entry", planId: planB!, parentId: totalB!, entryId: chapterId!}, 4, actor);
+        await applyReadyLibraryAction(ready, {kind: "attach-entry", planId: planB!, parentId: chapterId!, entryId: detailId!}, 5, actor);
         const before = await openProjectPlanning(ref);
         const source = before.entries.find(({value}) => value.id === detailId)!;
         const sourceBytes = await fs.readFile(path.join(projectRoot, source.path), "utf8");
         await expect(forkReadyLibraryEntry(ready, {planId: planB!, sourceId: detailId!, title: "另一版细纲",
-            body: "新初稿", expectedRevision: 6}, actor)).rejects.toMatchObject({code: "MANIFEST_REVISION_CONFLICT"});
+            body: "新初稿", expectedRevision: 5}, actor)).rejects.toMatchObject({code: "MANIFEST_REVISION_CONFLICT"});
         const fork = await forkReadyLibraryEntry(ready, {planId: planB!, sourceId: detailId!, title: "另一版细纲",
             body: "新初稿", expectedRevision: before.manifest.revision}, actor);
         await closeProject(ref, "shutdown");

@@ -5,9 +5,10 @@ import {createEmptyManifest, contentHash, parseEntryMarkdown, parseLineYaml, par
 import {analyzeDetail, confirmDetail, detailAnalysisContext, type DetailAnalysisRequest} from "./detail-analysis";
 import {invalidateDependentDetails} from "./analysis-invalidation";
 import {prepareLibraryAction} from "./library";
-import {publishPlanningFiles, readPlanningSnapshot, type PlanningSnapshot} from "./index";
+import {publishPlanningFiles, readPlanningSnapshot, type PlanningPublishInput, type PlanningSnapshot} from "./index";
 import {publishOutlineFiles, recoverOutlineTransactions} from "./transaction";
 import {PlanningFixture} from "./line-graph.fixture";
+import {detailBody, sceneDetail} from "./detail.fixture";
 
 function fixture(): {snapshot: PlanningSnapshot; request: DetailAnalysisRequest} {
     const root: OutlineEntry = {schema: "nbook.outline-entry/v2", id: "ol-root", kind: "total", version: 0,
@@ -15,13 +16,13 @@ function fixture(): {snapshot: PlanningSnapshot; request: DetailAnalysisRequest}
     const chapter: OutlineEntry = {...root, id: "ol-chapter", kind: "chapter", status: "adopted",
         title: "第一章", body: "主角获救", parentId: root.id};
     const detail: OutlineEntry = {...chapter, id: "ol-detail", kind: "detail", status: "draft",
-        title: "片段", body: "主角逃跑", chapterId: chapter.id, parentId: chapter.id};
+        title: "片段", ...sceneDetail("主角逃跑"), chapterId: chapter.id, parentId: chapter.id};
     const resolved = [root, chapter, detail].map((value) => ({
         path: `outline/entries/${value.kind}--${value.id}.md`, contentHash: contentHash(serializeEntryMarkdown(value)), value, markers: [],
     }));
-    const manifest = {...createEmptyManifest(), revision: 3, totalId: root.id,
+    const manifest = {...createEmptyManifest(), revision: 3,
         entries: resolved.map(({value, path, contentHash: hash}) => ({id: value.id, path, version: value.version, contentHash: hash})),
-        plans: [{id: "plan-a", title: "方案", placements: [
+        plans: [{id: "plan-a", title: "方案", totalId: root.id, placements: [
             {entryId: root.id, parentId: null, position: 0},
             {entryId: chapter.id, parentId: root.id, position: 1},
             {entryId: detail.id, parentId: chapter.id, position: 2},
@@ -31,10 +32,14 @@ function fixture(): {snapshot: PlanningSnapshot; request: DetailAnalysisRequest}
         expectedRevision: 3, expectedVersion: 0, expectedContentHash: resolved[2]!.contentHash}};
 }
 
-/** 创建全局总纲与首个方案并正式采用总纲；线路固定只接受正式条目。 */
+/** 创建方案（自带空总纲）、写入总纲正文并正式采用总纲；线路固定只接受正式条目。 */
 function adoptedPlan(planning: PlanningFixture, title: string): {rootId: OutlineId; planId: string} {
-    const rootId = planning.library({kind: "create-total", title: "总纲", body: "成长"}).entryId!;
-    const planId = planning.library({kind: "create-plan", title}).planId!;
+    const created = planning.library({kind: "create-plan", title});
+    const planId = created.planId!;
+    const rootId = created.entryId!;
+    const empty = planning.entry(rootId);
+    planning.library({kind: "edit-entry", planId, entryId: rootId, expectedVersion: empty.value.version,
+        expectedContentHash: empty.contentHash, title: empty.value.title, body: "成长"});
     const root = planning.entry(rootId);
     planning.library({kind: "adopt-entry", planId, entryId: rootId, expectedVersion: root.value.version,
         expectedContentHash: root.contentHash});
@@ -44,7 +49,7 @@ function adoptedPlan(planning: PlanningFixture, title: string): {rootId: Outline
 /** 走真实分析与确认流程采用细纲，报告绑定签发方案。 */
 async function adoptDetail(planning: PlanningFixture, planId: string, chapterId: OutlineId, title: string): Promise<OutlineId> {
     const detailId = planning.library({kind: "create-entry", planId, parentId: chapterId, entryKind: "detail",
-        title, body: "主角逃跑"}).entryId!;
+        title, ...sceneDetail("主角逃跑")}).entryId!;
     const source = planning.entry(detailId);
     const request: DetailAnalysisRequest = {planId, entryId: detailId, expectedRevision: planning.snapshot.manifest.revision,
         expectedVersion: source.value.version, expectedContentHash: source.contentHash};
@@ -70,11 +75,11 @@ function chainLine(planning: PlanningFixture, planId: string, title: string, typ
 }
 
 describe("细纲审阅与正式采用", () => {
-    it("无关方案变动不改变细纲报告作用域摘要，同方案内容变动必须改变摘要", () => {
+    it("审阅摘要只随上游链变化：其他方案、方案标题和同方案链外条目不影响，章节改动必须改变摘要", () => {
         const {snapshot, request} = fixture();
         const initial = detailAnalysisContext(snapshot, request).contextHash;
         const withOtherPlan: PlanningSnapshot = {...snapshot, manifest: {...snapshot.manifest, revision: 4,
-            plans: [...snapshot.manifest.plans, {id: "plan-b", title: "另一方案", placements: [
+            plans: [...snapshot.manifest.plans, {id: "plan-b", title: "另一方案", totalId: "ol-root", placements: [
                 {entryId: "ol-root", parentId: null, position: 0},
             ]}],
         }};
@@ -86,7 +91,15 @@ describe("细纲审阅与正式采用", () => {
         const renamedOwn: PlanningSnapshot = {...renamedOther, manifest: {...renamedOther.manifest, revision: 6,
             plans: renamedOther.manifest.plans.map((plan) => plan.id === "plan-a" ? {...plan, title: "改名甲方案"} : plan),
         }};
-        expect(detailAnalysisContext(renamedOwn, {...request, expectedRevision: 6}).contextHash).not.toBe(initial);
+        expect(detailAnalysisContext(renamedOwn, {...request, expectedRevision: 6}).contextHash).toBe(initial);
+        const withSibling: PlanningSnapshot = {...snapshot, manifest: {...snapshot.manifest, revision: 7,
+            entries: [...snapshot.manifest.entries, {id: "ol-other", path: "outline/entries/chapter--ol-other.md", version: 0,
+                contentHash: "sha256:" + "3".repeat(64)}],
+            plans: snapshot.manifest.plans.map((plan) => ({...plan, placements: [
+                ...plan.placements.map((place) => ({...place, position: place.position + 1})),
+                {entryId: "ol-other", parentId: "ol-root", position: 0}]})),
+        }};
+        expect(detailAnalysisContext(withSibling, {...request, expectedRevision: 7}).contextHash).toBe(initial);
         const chapter = snapshot.entries.find(({value}) => value.id === "ol-chapter")!;
         const revisedChapter = {...chapter.value, version: chapter.value.version + 1, body: "另一版章节"};
         const revisedHash = contentHash(serializeEntryMarkdown(revisedChapter));
@@ -100,7 +113,7 @@ describe("细纲审阅与正式采用", () => {
         };
         expect(detailAnalysisContext(changedSibling, {...request, expectedRevision: 6}).contextHash).not.toBe(initial);
     });
-    it("修改所属章节或方案顺序时，已采用细纲在同批次撤回并清除旧报告", () => {
+    it("修改所属章节或改挂到其他章节时，已采用细纲在同批次撤回并清除旧报告；仅调整顺序不撤回", () => {
         const {snapshot} = fixture();
         const detail = snapshot.entries[2]!;
         const adopted = {...detail.value, version: 1, status: "adopted" as const, analysis: {
@@ -129,7 +142,15 @@ describe("细纲审阅与正式采用", () => {
         const reordered = invalidateDependentDetails(current, {expectedManifestRevision: current.manifest.revision, mutations: [{
             relativePath: "outline/manifest.yaml", content: serializeManifest(movedManifest),
         }]});
-        expect(reordered.mutations.some(({relativePath}) => relativePath === detail.path)).toBe(true);
+        expect(reordered.mutations.some(({relativePath}) => relativePath === detail.path)).toBe(false);
+        const reparentedManifest = {...current.manifest, revision: current.manifest.revision + 1, plans: current.manifest.plans.map((plan) => ({
+            ...plan, placements: plan.placements.map((placement) => placement.entryId === detail.value.id
+                ? {...placement, parentId: "ol-root" as OutlineId} : placement),
+        }))};
+        const reparented = invalidateDependentDetails(current, {expectedManifestRevision: current.manifest.revision, mutations: [{
+            relativePath: "outline/manifest.yaml", content: serializeManifest(reparentedManifest),
+        }]});
+        expect(reparented.mutations.some(({relativePath}) => relativePath === detail.path)).toBe(true);
     });
     it("将已采用细纲新挂到另一方案时，先撤回报告并解固定章节线路", async () => {
         const planning = new PlanningFixture();
@@ -138,8 +159,10 @@ describe("细纲审阅与正式采用", () => {
         const detailId = await adoptDetail(planning, planA, chapterId, "片段");
         const lineId = chainLine(planning, planA, "章节线", "main", [rootId, chapterId]);
         await planning.fix(lineId);
-        const planB = planning.library({kind: "create-plan", title: "另一方案"}).planId!;
-        planning.library({kind: "attach-entry", planId: planB, parentId: rootId, entryId: chapterId});
+        const createdB = planning.library({kind: "create-plan", title: "另一方案"});
+        const planB = createdB.planId!;
+        const totalB = createdB.entryId!;
+        planning.library({kind: "attach-entry", planId: planB, parentId: totalB, entryId: chapterId});
         const current = planning.snapshot;
         const detail = planning.entry(detailId);
         const line = planning.lineSource(lineId);
@@ -182,9 +205,10 @@ describe("细纲审阅与正式采用", () => {
         expect(editedLine).toBeDefined();
         expect(parseLineYaml(editedLine!.content!)).toMatchObject({fixed: false, version: chapterLine.value.version + 1});
         expect(directEdit.publish.mutations.some(({relativePath}) => relativePath === unrelatedLine.path)).toBe(false);
+        // 仅在 manifest 中把细纲改挂到另一章：上游链变化，撤回并解固定原章节所在线路。
         const next = {...current.manifest, revision: current.manifest.revision + 1, plans: current.manifest.plans.map((plan) => ({
             ...plan, placements: plan.placements.map((place) => place.entryId === detailId
-                ? {...place, position: place.position + 1} : place),
+                ? {...place, parentId: otherId} : place),
         }))};
         const result = invalidateDependentDetails(current, {expectedManifestRevision: current.manifest.revision, mutations: [
             {relativePath: "outline/manifest.yaml", content: serializeManifest(next)},
@@ -197,12 +221,14 @@ describe("细纲审阅与正式采用", () => {
             contentHash: contentHash(chapterLineMutation!.content!)});
         expect(result.mutations.some(({relativePath}) => relativePath === unrelatedLine.path)).toBe(false);
     });
-    it("方案甲变化仅撤回甲的报告与固定线路，改动共享总纲时两方案均撤回", async () => {
+    it("改写甲的章节只撤回甲的细纲与固定线路，新增同级章节或改名不撤回，改动共享总纲时两方案均撤回", async () => {
         const planning = new PlanningFixture();
         const {rootId, planId: planA} = adoptedPlan(planning, "方案");
         const chapterA = planning.adoptedChapter(planA, rootId, "第一章", "主角获救");
         const detailA = await adoptDetail(planning, planA, chapterA, "片段");
+        // 乙方案手动改用甲的总纲（空总纲无需确认替换），两方案才共用同一总纲。
         const planB = planning.library({kind: "create-plan", title: "乙方案"}).planId!;
+        planning.library({kind: "associate-total", planId: planB, totalId: rootId});
         const chapterB = planning.adoptedChapter(planB, rootId, "乙章节", "主角获救");
         const detailB = await adoptDetail(planning, planB, chapterB, "乙细纲");
         const lineA = chainLine(planning, planA, "甲", "main", [rootId, chapterA]);
@@ -215,25 +241,38 @@ describe("细纲审阅与正式采用", () => {
         const lines = [planning.lineSource(lineA), planning.lineSource(lineB)];
         const create = prepareLibraryAction(current, {kind: "create-entry", planId: planA, parentId: rootId,
             entryKind: "chapter", title: "甲新增章节", body: ""});
-        const scoped = invalidateDependentDetails(current, create.publish);
-        expect(scoped.mutations.some(({relativePath}) => relativePath === detailAPath)).toBe(true);
-        expect(scoped.mutations.some(({relativePath}) => relativePath === detailBPath)).toBe(false);
-        expect(scoped.mutations.some(({relativePath}) => relativePath === lines[0]!.path)).toBe(true);
-        expect(scoped.mutations.some(({relativePath}) => relativePath === lines[1]!.path)).toBe(false);
-        // 乙的章节与细纲同时挂入甲方案；乙细纲的报告仍只绑定乙方案。
+        const sibling = invalidateDependentDetails(current, create.publish);
+        expect(sibling.mutations.some(({relativePath}) => relativePath === detailAPath)).toBe(false);
+        expect(sibling.mutations.some(({relativePath}) => lines.some((line) => line.path === relativePath))).toBe(false);
+        const chapter = planning.entry(chapterA);
+        const chapterEdit = invalidateDependentDetails(current, prepareLibraryAction(current, {kind: "edit-entry", planId: planA,
+            entryId: chapterA, expectedVersion: chapter.value.version, expectedContentHash: chapter.contentHash,
+            title: "改写第一章", body: "主角脱险"}).publish);
+        expect(chapterEdit.mutations.some(({relativePath}) => relativePath === detailAPath)).toBe(true);
+        expect(chapterEdit.mutations.some(({relativePath}) => relativePath === detailBPath)).toBe(false);
+        expect(chapterEdit.mutations.some(({relativePath}) => relativePath === lines[0]!.path)).toBe(true);
+        expect(chapterEdit.mutations.some(({relativePath}) => relativePath === lines[1]!.path)).toBe(false);
+        // 乙的章节与细纲同时挂入甲方案；乙细纲的报告仍只绑定乙方案，甲方案改名不影响任何报告。
         const shared: PlanningSnapshot = {...current, manifest: {...current.manifest, plans: current.manifest.plans.map((plan) =>
             plan.id !== planA ? plan : {...plan, placements: [...plan.placements,
                 {entryId: chapterB, parentId: rootId, position: 100},
                 {entryId: detailB, parentId: chapterB, position: 101}]})}};
         const rename = invalidateDependentDetails(shared, prepareLibraryAction(shared,
             {kind: "rename-plan", planId: planA, title: "甲新方案"}).publish);
-        expect(rename.mutations.some(({relativePath}) => relativePath === detailAPath)).toBe(true);
-        expect(rename.mutations.some(({relativePath}) => relativePath === detailBPath)).toBe(false);
-        expect(rename.mutations.some(({relativePath}) => relativePath === lines[0]!.path)).toBe(true);
-        expect(rename.mutations.some(({relativePath}) => relativePath === lines[1]!.path)).toBe(false);
-        const globalEdit = prepareLibraryAction(current, {kind: "edit-entry", planId: planA, entryId: rootId,
-            expectedVersion: root.value.version, expectedContentHash: root.contentHash, title: "新总纲", body: "改写", confirmGlobal: true});
-        const global = invalidateDependentDetails(current, globalEdit.publish);
+        expect(rename.mutations.some(({relativePath}) => relativePath === detailAPath || relativePath === detailBPath)).toBe(false);
+        // 共用总纲不能经领域操作原地修改；这里直接构造改写共用总纲的发布批次，验证撤回波及所有共用方案。
+        expect(() => prepareLibraryAction(current, {kind: "edit-entry", planId: planA, entryId: rootId,
+            expectedVersion: root.value.version, expectedContentHash: root.contentHash, title: "新总纲", body: "改写"}))
+            .toThrow(/多个方案共用/);
+        const editedRoot = serializeEntryMarkdown({...root.value, version: root.value.version + 1, status: "draft",
+            title: "新总纲", body: "改写"});
+        const globalEdit: PlanningPublishInput = {expectedManifestRevision: current.manifest.revision, mutations: [
+            {relativePath: root.path, content: editedRoot, expectedHash: root.contentHash},
+            {relativePath: "outline/manifest.yaml", content: serializeManifest({...current.manifest,
+                revision: current.manifest.revision + 1, entries: current.manifest.entries.map((ref) => ref.id === rootId
+                    ? {...ref, version: root.value.version + 1, contentHash: contentHash(editedRoot)} : ref)})},
+        ]};
+        const global = invalidateDependentDetails(current, globalEdit);
         for (const path of [detailAPath, detailBPath]) {
             expect(parseEntryMarkdown(global.mutations.find(({relativePath}) => relativePath === path)!.content!))
                 .toMatchObject({status: "draft", version: 2});
@@ -285,7 +324,8 @@ describe("细纲审阅与正式采用", () => {
     it("生成报告不改变草稿；确认偏差和逐项处理冲突后写入可往返的正式报告", async () => {
         const {snapshot, request} = fixture();
         const issued = await analyzeDetail(snapshot, request, async (prompt) => {
-            expect(JSON.parse(prompt)).toMatchObject({chapter: {title: "第一章"}, detail: {title: "片段"}, plan: {title: "方案"}});
+            expect(JSON.parse(prompt)).toMatchObject({total: {title: "总纲"}, volume: null, chapter: {title: "第一章"}, detail: {title: "片段"}});
+            expect(JSON.parse(prompt)).not.toHaveProperty("plan");
             return JSON.stringify({summary: "节奏冲突", deviations: ["偏离章纲"], conflicts: ["主角去向矛盾"]});
         });
         expect(snapshot.entries[2]!.value.status).toBe("draft");
@@ -299,18 +339,32 @@ describe("细纲审阅与正式采用", () => {
             reportId: issued.report.reportId, resolutions: [{index: 0, decision: "ignored", reason: "倒叙设计已确认"}],
         }});
     });
+    it("细纲结构不完整时不调用模型，直接拒绝分析", async () => {
+        const {snapshot, request} = fixture();
+        const detail = snapshot.entries[2]!;
+        const value: OutlineEntry = {...detail.value, body: `前言\n\n${sceneDetail("主角逃跑").body}`};
+        const hash = contentHash(serializeEntryMarkdown(value));
+        const current: PlanningSnapshot = {...snapshot, entries: [...snapshot.entries.slice(0, 2), {...detail, value, contentHash: hash}],
+            manifest: {...snapshot.manifest, entries: snapshot.manifest.entries.map((ref) => ref.id === value.id ? {...ref, contentHash: hash} : ref)}};
+        let called = false;
+        await expect(analyzeDetail(current, {...request, expectedContentHash: hash}, async () => {
+            called = true;
+            return JSON.stringify({summary: "一致", deviations: [], conflicts: []});
+        })).rejects.toThrow(/细纲结构不完整：第一个一级标题之前不能有内容/);
+        expect(called).toBe(false);
+    });
     it("待补参考文件作为程序告警随报告返回，不阻止采用也不写入正式报告", async () => {
         const {snapshot, request} = fixture();
         const detail = snapshot.entries[2]!;
-        const value: OutlineEntry = {...detail.value, references: [{path: "research/雨夜.md"},
-            {locator: "旧城区地图", purpose: "街道走向", pending: true}]};
+        // 细纲的参考资料写在场景正文里，没有链接的项是待补资料。
+        const value: OutlineEntry = {...detail.value, body: detailBody({scenes: [{plot: ["主角逃跑"],
+            references: ["[雨夜](research/雨夜.md)", "旧城区地图"]}]})};
         const hash = contentHash(serializeEntryMarkdown(value));
         const current: PlanningSnapshot = {...snapshot, entries: [...snapshot.entries.slice(0, 2), {...detail, value, contentHash: hash}],
             manifest: {...snapshot.manifest, entries: snapshot.manifest.entries.map((ref) => ref.id === value.id ? {...ref, contentHash: hash} : ref)}};
         const input = {...request, expectedContentHash: hash};
         const issued = await analyzeDetail(current, input, async () => JSON.stringify({summary: "一致", deviations: [], conflicts: []}));
-        expect(issued.warnings).toEqual([{code: "PENDING_REFERENCE", entryId: value.id, entryPath: detail.path,
-            locator: "旧城区地图", purpose: "街道走向"}]);
+        expect(issued.warnings).toEqual([{code: "PENDING_REFERENCE", entryId: value.id, entryPath: detail.path, locator: "旧城区地图"}]);
         const saved = confirmDetail(current, input, issued, issued.report.reportId, false, []).publish.mutations
             .find(({relativePath}) => relativePath === detail.path)!.content!;
         expect(parseEntryMarkdown(saved).analysis).not.toHaveProperty("warnings");

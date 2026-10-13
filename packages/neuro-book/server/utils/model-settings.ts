@@ -200,13 +200,19 @@ async function runPiModelSmokeCheck(
 
     const startedAt = Date.now();
     try {
+        // 健康检查只验证连接、认证和基本响应，不应把模型的推理能力带入探测请求。
+        // Anthropic 兼容网关（例如 Kitool 的新版 Claude 模型）可能要求 adaptive
+        // thinking；连通性检查发送 disabled 会把“能否连接”误报成“思考参数不兼容”。
+        const smokeModelDraft = modelDraft.reasoning === true
+            ? {...modelDraft, reasoning: false}
+            : modelDraft;
         const model = resolvePiModelMetadata(providerDraft.id, {
             name: providerDraft.name,
             enabled: true,
             modelApi: providerDraft.modelApi,
             options: providerDraft.options,
             models: {},
-        }, {...modelDraft, enabled: true});
+        }, {...smokeModelDraft, enabled: true});
         const config = {
             models: {
                 defaultModelKey: `${providerDraft.id}/${modelDraft.id}`,
@@ -217,7 +223,7 @@ async function runPiModelSmokeCheck(
                         modelApi: providerDraft.modelApi,
                         options: providerDraft.options,
                         models: {
-                            [modelDraft.id]: {...modelDraft, enabled: true},
+                            [modelDraft.id]: {...smokeModelDraft, enabled: true},
                         },
                     },
                 },

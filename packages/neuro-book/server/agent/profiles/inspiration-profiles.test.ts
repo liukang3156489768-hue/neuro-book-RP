@@ -11,7 +11,7 @@ import {resolveRuntimeArtifactCompilerContext} from "nbook/server/utils/runtime-
 const applicationRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const builtinRoot = resolve(applicationRoot, "assets/workspace/.nbook/agent/profiles/builtin");
 const categories = ["character", "faction", "instruction", "item", "location", "note", "system", "world"];
-const profileKeys = ["inspiration", ...categories.map(category => `inspiration.${category}`), "inspiration.extract"];
+const profileKeys = ["inspiration", ...categories.map(category => `inspiration.${category}`)];
 const roots: string[] = [];
 
 afterEach(async () => {
@@ -19,7 +19,7 @@ afterEach(async () => {
 });
 
 describe("Inspiration Profile 安装后的可运行性", () => {
-    it.each(["首次安装", "从缺失依赖的旧版本升级"])("%s：九个 Profile 都能编译并由 Catalog 加载", async mode => {
+    it.each(["首次安装", "从缺失依赖的旧版本升级"])("%s：八个 Profile 都能编译并由 Catalog 加载", async mode => {
         const root = await createTestTmpRoot("inspiration-profiles", "profile-install-compile-load");
         roots.push(root);
         const seedApplication = join(root, "application");
@@ -70,7 +70,7 @@ describe("Inspiration Profile 安装后的可运行性", () => {
             const profile = await catalog.get(key);
             expect(profile.manifest.key).toBe(key);
             expect(profile.rootToolKeys).toEqual(["report_result"]);
-            expect(catalog.parseInitial(profile, key === "inspiration" ? {} : key === "inspiration.extract" ? {categories: ["character"], fields: {character: ["角色名称"]}} : {fields: ["名称", "规则"]})).toBeDefined();
+            expect(catalog.parseInitial(profile, key === "inspiration" ? {} : {fields: ["名称", "规则"]})).toBeDefined();
             expect(profile.outputSchema).toBeDefined();
         }
         expect((await seedSystemAssets({applicationRoot: seedApplication, stateRoot})).seeded).toBe(false);

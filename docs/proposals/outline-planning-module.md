@@ -798,6 +798,8 @@ Agent 的操作结果需要区分“已执行”“已生成草稿”“待用�
   - 还原现有 `writer` Profile、文件工具、章级写作评审 workflow 与写作 smoke 的改动；
   - 删除迁移 Spec、领域实现、HTTP 路由和界面入口；
   - 正文交接不再携带伏笔定义正文。
+- 2026-09-29，开发者：正文写作以大纲库的层级为准，线路规划暂时只供用户梳理剧情，写作模块不采用其中的信息；本文中“线路决定正文顺序与使用范围”“固定线路是正文入口”的表述由此取代，见 [正文写作模块](./writing-module.md) 与 [outline.writer-handoff](../specs/outline/writer-handoff.md)。
+- 2026-10-02，开发者：总纲改为每方案一个，仅手动关联时共享，细纲新增“来源提取”采用依据；本文中“全局唯一总纲”“管理全局唯一总纲”的表述由此取代，见 [Inspiration 作品大纲提取与大纲库接轨](./inspiration-outline-extraction.md) 与 [outline.planning-library](../specs/outline/planning-library.md)。
 
 - 2026-09-24，开发者：要求根据已确认设计正式规划开发落地。
 - 2026-09-24，主 Agent：将 Proposal 提升为 `accepted`，创建 Work w00018-outline-planning-module、合同 Task 和六项 planned Spec；明确 Phase 0 在编码前收敛数据所有权、文件格式、标记语法、迁移和分析服务边界。

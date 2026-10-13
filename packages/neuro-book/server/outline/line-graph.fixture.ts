@@ -123,8 +123,9 @@ export type DesignNodeKey = "m0" | "m1" | "b2" | "a2" | "k1" | "m3" | "k3" | "b4
  * 行 3  m0 → k1 ─────→ k3 ─┘
  */
 export function buildDesignGraph(fixture = new PlanningFixture()) {
-    const totalId = fixture.library({kind: "create-total", title: "总纲", body: "开端"}).entryId!;
-    const planId = fixture.library({kind: "create-plan", title: "主方案"}).planId!;
+    const created = fixture.library({kind: "create-plan", title: "主方案"});
+    const planId = created.planId!;
+    const totalId = created.entryId!;
     const cells: Record<DesignNodeKey, readonly [number, number]> = {
         m0: [0, 0], m1: [1, 0], b2: [2, 1], a2: [2, 2], k1: [1, 3], m3: [3, 0], k3: [3, 3], b4: [4, 1], j4: [4, 2], m6: [6, 0],
     };

@@ -62,10 +62,10 @@ describe("consult_planning_specialist", () => {
         expect(mock.getAgent).toHaveBeenCalledWith(undefined, 42);
         expect(mock.createAgent).toHaveBeenCalledWith({
             profileKey: "outline.outline",
-            initial: {projectRoot: "demo"},
+            initial: {projectRoot: "demo", creationMode: "original"},
             parentSessionId: 42,
             currentProjectRoot: "demo",
-            title: "outline（大纲专家）",
+            title: "outline（大纲专家）（原创）",
         });
         const invocation = mock.invokeAgent.mock.calls[0]![0] as Record<string, any>;
         expect(invocation).toMatchObject({
@@ -89,6 +89,37 @@ describe("consult_planning_specialist", () => {
         const invocation = mock.invokeAgent.mock.calls[0]![0] as Record<string, unknown>;
         expect(invocation.sessionId).toBe(6);
         expect(invocation).not.toHaveProperty("modelKey");
+    });
+
+    it("复用专家时每次传递最新方案、稳定来源和所选素材，不依赖历史", async () => {
+        const mock = harness({linked: [
+            {sessionId: 6, profileKey: "outline.outline", currentProjectRoot: "demo", status: "idle"},
+        ]});
+        const firstTask = {creationMode: "adaptation", targetPlanId: "plan-a", adaptation: {
+            kind: "chapter", sourcePlanId: "plan-source", sourceEntryId: "ol-source3",
+        }, materialPaths: ["lorebook/character/hero/index.md"]};
+        const nextTask = {creationMode: "adaptation", targetPlanId: "plan-b", adaptation: {
+            kind: "between", sourcePlanId: "plan-source", beforeEntryId: "ol-source3", afterEntryId: "ol-source4",
+        }, materialPaths: ["lorebook/note/写作手法索引.md"]};
+        for (const taskContext of [firstTask, nextTask]) {
+            const input = {specialist: "outline", brief: "按当前任务规划", taskContext};
+            expect(Value.Check(tool.parameters, input)).toBe(true);
+            await run(context(mock), input);
+        }
+        const calls = mock.invokeAgent.mock.calls.map(([input]) => input as unknown as {sessionId: number; message: {text: string}});
+        expect(calls.map((call) => call.sessionId)).toEqual([77, 77]);
+        expect(calls[0]!.message.text).toContain(JSON.stringify(firstTask));
+        expect(calls[1]!.message.text).toContain(JSON.stringify(nextTask));
+        expect(calls[1]!.message.text).not.toContain("plan-a");
+        expect(mock.createAgent).toHaveBeenCalledTimes(2);
+    });
+
+    it("缺少新上下文的旧调用不从子会话历史获得任务位置", async () => {
+        const mock = harness();
+        await run(context(mock));
+        const message = (mock.invokeAgent.mock.calls[0]![0] as unknown as {message: {text: string}}).message.text;
+        expect(message).toContain("未提供结构化任务上下文");
+        expect(message).toContain("openQuestions");
     });
 
     it("专家停在 waiting 或调用失败时抛错", async () => {

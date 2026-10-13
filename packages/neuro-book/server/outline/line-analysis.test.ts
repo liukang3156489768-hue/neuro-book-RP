@@ -33,7 +33,7 @@ describe("线路语义分析与固定", () => {
     });
 
     it("非链、空节点、草稿条目与已固定线路都不进入模型分析", async () => {
-        const {fixture, planId, nodes, lines} = buildDesignGraph();
+        const {fixture, planId, totalId, nodes, lines} = buildDesignGraph();
         const never = async () => { throw new Error("不应调用模型"); };
         const draft = (title: string, nodeIds: OutlineId[]) => fixture.createLine(planId, title, "if", nodeIds);
         const expectRejected = async (lineId: OutlineId, message: RegExp) =>
@@ -44,7 +44,6 @@ describe("线路语义分析与固定", () => {
         const empty = fixture.graph("add-graph-node", planId, {column: 7, row: 0}).nodeId!;
         fixture.graph("connect-graph-nodes", planId, {from: nodes.m6, to: empty});
         await expectRejected(draft("空节点", [nodes.m6, empty]), /空节点/);
-        const totalId = fixture.snapshot.manifest.totalId!;
         const draftEntry = fixture.library({kind: "create-entry", planId, parentId: totalId, entryKind: "chapter",
             title: "草稿章", body: "未采用"}).entryId!;
         fixture.graph("relink-graph-node", planId, {nodeId: empty, entryId: draftEntry});

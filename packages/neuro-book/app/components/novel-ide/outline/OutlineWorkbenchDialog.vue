@@ -16,6 +16,8 @@ const props = defineProps<{
     projectRoot: string | null;
     projectTitle?: string;
     surface: WorkbenchLayoutSurface;
+    /** 打开时要定位的条目及其方案；token 每次请求递增。 */
+    focus?: Readonly<{entryId: string; planId: string | null; token: number}> | null;
 }>();
 const emit = defineEmits<{(event: "update:modelValue", value: boolean): void}>();
 
@@ -66,9 +68,26 @@ async function loadModelOptions(): Promise<void> {
 watch(() => data.snapshot.value?.manifest.plans, (plans) => {
     if (!plans?.some((plan) => plan.id === selectedPlanId.value)) selectedPlanId.value = plans?.[0]?.id ?? null;
 }, {immediate: true});
+const libraryFocus = ref<{entryId: string; token: number} | null>(null);
+/** 先读最新快照再定位：条目可能刚在别处新建，按旧快照会被误报为不存在。 */
+let focusing: number | null = null;
+async function applyFocus(): Promise<void> {
+    const focus = props.focus;
+    if (!focus || libraryFocus.value?.token === focus.token || focusing === focus.token) return;
+    focusing = focus.token;
+    try { await data.refresh(); } finally { focusing = null; }
+    if (!props.modelValue || props.focus?.token !== focus.token) return;
+    if (focus.planId && data.snapshot.value?.manifest.plans.some((plan) => plan.id === focus.planId)) selectedPlanId.value = focus.planId;
+    if (activeTab.value !== "library") setView("library");
+    libraryFocus.value = {entryId: focus.entryId, token: focus.token};
+}
 watch(() => props.modelValue, (open) => {
-    if (open) { void data.refresh(); void loadModelOptions(); }
+    if (!open) return;
+    void loadModelOptions();
+    if (props.focus && libraryFocus.value?.token !== props.focus.token) void applyFocus();
+    else void data.refresh();
 });
+watch(() => props.focus?.token, () => { if (props.modelValue) void applyFocus(); });
 watch(() => props.projectRoot, () => { void loadModelOptions(); }, {immediate: true});
 
 async function save(patch: Parameters<typeof session.commit>[0]): Promise<void> {
@@ -130,6 +149,8 @@ onBeforeUnmount(() => {
             <aside class="outline-agent" aria-label="规划 Agent">
                 <OutlineWorkbenchAgentPane
                     :project-root="props.projectRoot"
+                    :plan-id="selectedPlan?.id ?? null"
+                    :creation-mode="session.state.value.creationMode"
                     :mode="session.state.value.mode"
                     :model-key="session.state.value.modelKey ?? undefined"
                     :temperature="session.state.value.temperature"
@@ -146,7 +167,7 @@ onBeforeUnmount(() => {
                 <div v-if="data.error.value" class="workbench-notice is-danger" role="alert"><span class="i-lucide-circle-alert"></span>{{ data.error.value }}<button type="button" @click="void data.refresh()">重试</button></div>
                 <section v-if="activeTab === 'library'" class="view-panel is-split" aria-label="大纲库">
                     <div class="view-heading"><div><h2>大纲库</h2><p>管理总纲、方案和各级大纲。所有修改先保存为草稿，确认后再正式采用。</p></div></div>
-                    <OutlineLibraryPanel v-model:plan-id="selectedPlanId" :project-root="props.projectRoot" :snapshot="data.snapshot.value" :library-trees="data.libraryTrees.value" :refresh="data.refresh" />
+                    <OutlineLibraryPanel v-model:plan-id="selectedPlanId" :project-root="props.projectRoot" :snapshot="data.snapshot.value" :library-trees="data.libraryTrees.value" :refresh="data.refresh" :focus-request="libraryFocus" />
                 </section>
                 <section v-else-if="activeTab === 'foreshadowing'" class="view-panel is-split" aria-label="伏笔库">
                     <div class="view-heading"><div><h2>伏笔库</h2><p>设计伏笔并追踪它在章节大纲中的埋设、强化与回收。状态由已采用章节中的标记自动计算。</p></div></div>

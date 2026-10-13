@@ -11,9 +11,9 @@ owners:
 
 ## 目标与非目标
 
-用户从项目左侧模块栏打开悬浮的设计工作台，完成八类原创素材的设计、审阅和确认保存；可在项目内管理聊天记录，并从选择的作品资料分块中分析、提取可追溯的设定和结构资料。
+用户从项目左侧模块栏打开设计工作台，完成八类素材的设计、审阅和确认保存，可在项目内管理设计聊天记录。素材设计页支持原创与改编，改编行为见 [inspiration.design-adaptation](../inspiration/design-adaptation.md)。作品提取由同一窗口的独立“作品提取”页负责，合同见两个提取 Spec。
 
-不承诺自动跨块实体整合、用户指定实体合并或大纲库入库。这些能力仍属于后续范围，不以不可执行的按钮伪装为已经可用。
+本 Spec 不重复定义作品提取的自动跨块实体整合、用户指定实体合并或大纲库写入；这些能力由工作台内独立的“作品提取”页签提供，合同见 [inspiration.outline-extraction](../inspiration/outline-extraction.md) 与 [inspiration.material-extraction](../inspiration/material-extraction.md)。
 
 ## 术语与参与者
 
@@ -37,7 +37,7 @@ Inspiration 负责理解设计需求、分派专业方向和汇总成果。八�
 
 用户可以审阅、编辑、提出修改意见，并明确确认待保存的具体内容。确认前不得写入正式素材目录。成功后显示保存位置；失败时保留可重试的审阅内容。
 
-作品准备展示来源、切分结果和段落编号。用户选择分块和目标类别后，程序重新读取来源并仅将该范围原文交给提取 Agent；每项结果必须引用本块 P 段落范围，且不能以原文未见的信息补写。用户要求大纲或细纲时，提取为 `note` 类的写作指导与参考资料。首版支持 UTF-8 TXT/Markdown，单文件不超过 5 MiB；编号 P1 起在文件内连续，由程序维护。来源包含内容哈希，段落保存原文位置、章节及块归属；原文件保持只读。不足目标字数的末块保留，不截断完整章节来强行满足五万字目标；单章超过目标时单独保留完整章节。无法识别章节时按完整段落切分并提示该模式；字数使用非空白 Unicode 字符数，原文空白仍予保留。
+设计工作台顶部有“素材设计”与“作品提取”两个页签。“素材设计”页提供原创／改编创作方式；“作品提取”页是程序化的大纲提取与素材提取入口（章节识别与划卷、统一分块预览、素材选块、后台进度与重试、数据去向、归类与审阅写入），两条流水线的进度面板分开，可同时运行，互不阻塞。首次切入时才加载，之后切换页签保留状态。
 
 ## 状态与转换
 
@@ -63,6 +63,8 @@ Inspiration 负责理解设计需求、分派专业方向和汇总成果。八�
 
 沿用项目文件所有权、路径包含校验和变更历史，不建立绕过工作区保护的文件写入通道。模型负责产出草稿，不能越过用户审阅直接写正式素材。共享窗口和导航只增加本模块接入，不覆盖主工作区已有界面改动。
 
+旧版“作品分析与提取”入口已下线，`inspiration.extract` Profile、旧提取 API 与旧提取草稿路径一并移除。首次列出 Inspiration 会话时执行幂等清理：混合会话只保留原创设计消息，纯旧提取会话删除；关联旧提取草稿删除，已保存到 `lorebook/` 的正式条目保留。清理失败必须返回错误并允许下次重试，不得删除正式条目。
+
 不修改 writer.pro 的六项输入，不自动将八类素材全量注入下游上下文，不引入本次范围以外的数据库迁移或大纲库合同。
 
 ## 验收与 Smoke
@@ -74,6 +76,7 @@ Inspiration 负责理解设计需求、分派专业方向和汇总成果。八�
 - 生成中切换项目或取消，迟到结果不污染新项目，也不产生正式素材写入。
 - 选择有多个完整章节的作品，块内容可按顺序还原完整来源，段落编号与来源一致，末块不丢失，来源文件内容不变。
 - 桌面与 390×844 窄屏下均能输入、审阅与保存，键盘可访问入口、窗口操作和表单。
+- 切到“作品提取”页签：能选择来源、看到统一的块预览并确认划卷后开始整部大纲提取；素材提取可选择块后单独开始；两个任务同时运行时进度面板各自更新，互不阻塞；切回“素材设计”页再切换回来，进度与选择仍在。具体的提取行为按两个提取 Spec 验收。
 
 ## 实现合同
 
@@ -81,11 +84,16 @@ Inspiration 负责理解设计需求、分派专业方向和汇总成果。八�
 
 原创生成先创建绑定项目的不可变草稿，再由用户编辑并显式保存。服务端只根据草稿 artifact id 映射分类和确定性素材路径，不信任客户端分类或路径；确认记录和保存回执保证失败重试不覆盖不同内容。模型 invocation 绑定请求断连、主动取消、项目 ready 生命周期和十五分钟总超时。
 
+“作品提取”页签由 `InspirationWorkbenchDialog` 内的 `SegmentedControl` 切换，宿主为 `app/components/novel-ide/inspiration/extraction/InspirationExtractionPanel.vue`（组件分层、请求与轮询状态见该目录同名 `.md`、`app/utils/inspiration/extraction-api.ts` 与 `app/composables/useInspirationExtraction.ts`）；请求打到 `/api/inspiration/extraction/*`，服务端装配只有 `server/inspiration/extraction/host.ts` 一处。该页签不复用首版 `useInspirationWorkbench` 的分析提取状态。
+
 来源准备只读 `reference/` 内的 UTF-8 `.txt` / `.md` 文件，限制 5 MiB，并拒绝符号链接、目录联接和越界路径。切分器保留章节边界或完整段落，使用 P 编号、UTF-16 范围和 SHA-256 来源摘要。
 
 ## 证据
 
 - [首版提案及批准记录](../../proposals/inspiration-design-module.md)。
 - [.agents Work](../../../.agents/works/w00016-inspiration-design-module/README.md) 记录实现与验证过程。
-- 合同测试：`server/inspiration/**/*.test.ts`、`server/api/inspiration/**/*.test.ts`、`app/components/novel-ide/inspiration/InspirationWorkbenchDialog.contract.test.ts`、`app/utils/workbench-chrome.test.ts`。
+- “作品提取”页签的实现与验证记录见 [Work w00020](../../../.agents/works/w00020-inspiration-extraction-pipeline/README.md)（t08 界面接入、t09 验收）。
+- 实现入口：[工作台组件](../../../packages/neuro-book/app/components/novel-ide/inspiration/InspirationWorkbenchDialog.vue)、[服务编排](../../../packages/neuro-book/server/inspiration/service.ts)。
+- 合同测试：[草稿与版本](../../../packages/neuro-book/server/inspiration/service.test.ts)、[确认保存](../../../packages/neuro-book/server/inspiration/storage.test.ts)、[工作台入口](../../../packages/neuro-book/app/components/novel-ide/inspiration/InspirationWorkbenchDialog.contract.test.ts)。
+- Smoke：[工作台恢复与取消测试](../../../packages/neuro-book/app/composables/useInspirationWorkbench.test.ts) 提供无需模型的状态 smoke；[当前素材改编 Task](../../../.agents/works/w00016-inspiration-design-module/tasks/t02-design-adaptation/README.md) 记录 Mock 回归和隔离浏览器验证边界。
 - 验证命令：`bun x vitest run --config vitest.inspiration.config.ts --configLoader runner`（临时聚焦配置，37 tests）；`bun run --cwd packages/neuro-book typecheck`；`bun run --cwd packages/neuro-book system-assets:prepare`；`bun run docs:check`。

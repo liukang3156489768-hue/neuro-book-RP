@@ -45,6 +45,8 @@ const props = withDefaults(defineProps<{
     onSkillTriggerStart?: () => void;
     popoverDirection?: PopoverDirection;
     matchPopoverWidth?: boolean;
+    /** 宿主能把选区交给写作会话改写时为 true，右键菜单多一项“改写选中内容”。 */
+    canRewriteSelection?: boolean;
 }>(), {
     initialValue: "",
     visible: true,
@@ -68,6 +70,7 @@ const props = withDefaults(defineProps<{
     onSkillTriggerStart: () => {},
     popoverDirection: "auto",
     matchPopoverWidth: false,
+    canRewriteSelection: false,
 });
 
 const emit = defineEmits<{
@@ -82,6 +85,7 @@ const emit = defineEmits<{
     (e: "inline-comments-change", comments: MarkdownInlineCommentItem[]): void;
     (e: "inline-comment-select", index: number): void;
     (e: "inline-ai-reference", reference: InlineEditReference): void;
+    (e: "rewrite-selection", text: string): void;
 }>();
 
 const {prompt} = useDialog();
@@ -1025,6 +1029,10 @@ function buildContextMenuItems(): ContextMenuItem[] {
         {label: t("markdownStudio.editor.menuAddComment"), iconClass: "i-lucide-message-square-plus", disabled: writeDisabled || selectionDisabled, action: () => void addCommentFromMenu()},
         {label: t("markdownStudio.editor.menuAddRuby"), iconClass: "i-lucide-languages", disabled: writeDisabled || selectionDisabled, action: () => void addRubyFromMenu()},
         {label: t("markdownStudio.editor.menuAddBilingual"), iconClass: "i-lucide-letter-text", disabled: writeDisabled, action: () => void addBilingualFromMenu()},
+        ...(props.canRewriteSelection ? [
+            {separator: true},
+            {label: t("markdownStudio.editor.menuRewriteSelection"), iconClass: "i-lucide-feather", disabled: writeDisabled || selectionDisabled, action: () => emit("rewrite-selection", selectedClipboardText())},
+        ] : []),
         ...(activeComment ? [
             {label: t("markdownStudio.editor.menuEditComment"), iconClass: "i-lucide-message-square-text", disabled: writeDisabled, action: () => void editActiveComment()},
             {label: t("markdownStudio.editor.menuDeleteComment"), iconClass: "i-lucide-message-square-x", disabled: writeDisabled, action: deleteActiveComment},
@@ -1826,6 +1834,17 @@ function isSaveShortcut(event: KeyboardEvent): boolean {
 :deep(.nb-foreshadow-marker--plant) { text-decoration-color: var(--success); }
 :deep(.nb-foreshadow-marker--reinforce) { text-decoration-color: var(--warning); }
 :deep(.nb-foreshadow-marker--recover) { text-decoration-color: var(--accent-main); }
+:deep(.nb-outline-anchor--guidance) {
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--info) 12%, transparent);
+}
+:deep(.nb-outline-anchor--reference) {
+    text-decoration-line: underline;
+    text-decoration-style: dotted;
+    text-decoration-thickness: 1.5px;
+    text-decoration-color: color-mix(in srgb, var(--accent-main) 60%, transparent);
+    text-underline-offset: 3px;
+}
 :deep(.nb-inline-ai-reference-mark) {
     text-decoration-line: underline;
     text-decoration-style: wavy;

@@ -1,6 +1,7 @@
 import {describe, expect, it} from "vitest";
-import {completeModelCandidate} from "nbook/app/components/novel-ide/settings/sections/providers/provider-model-draft-factory";
+import {candidateFromLibrary, completeModelCandidate} from "nbook/app/components/novel-ide/settings/sections/providers/provider-model-draft-factory";
 import type {DiscoveredProviderModelDto, ModelLibraryEntryDto} from "nbook/shared/dto/app-settings.dto";
+import {modelKnowledge} from "nbook/server/models/model-library";
 
 describe("Model Candidate Completion", () => {
     it("完整远程字段保持优先", () => {
@@ -43,6 +44,28 @@ describe("Model Candidate Completion", () => {
         if (result.status === "incomplete") {
             expect(result.missingFields).toEqual(expect.arrayContaining(["api", "reasoning", "input", "contextWindowTokens", "maxTokens"]));
         }
+    });
+
+    it.each([
+        "claude-opus-5", "claude-opus-5-5", "gpt-6.1-sol", "gpt-6-astra",
+        "gemini-3.7-flash", "gemini-3.8-flash",
+    ])("%s 可从模型库导入，也可补齐仅返回 ID 的网关候选", (id) => {
+        const entry = modelKnowledge(id);
+        expect(entry).not.toBeNull();
+        if (!entry) throw new Error(`模型库缺少 ${id}`);
+
+        for (const api of ["openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai"] as const) {
+            expect(candidateFromLibrary(entry, api)).toMatchObject({
+                status: "complete", model: {id, api, enabled: true},
+            });
+        }
+        expect(completeModelCandidate(discovered({
+            id, api: null, contextWindowTokens: 128_000, maxTokens: 8_192,
+        }), entry, "anthropic-messages")).toMatchObject({
+            status: "complete",
+            model: {id, api: "anthropic-messages", contextWindowTokens: 128_000, maxTokens: 8_192},
+            provenance: {contextWindowTokens: "remote", maxTokens: "remote", reasoning: "model-library"},
+        });
     });
 });
 

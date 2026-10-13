@@ -4,7 +4,7 @@ import {flushPromises} from "@vue/test-utils";
 import {ref} from "vue";
 import {useOutlineWorkbenchData} from "./useOutlineWorkbenchData";
 
-const snapshot = {manifest: {revision: 0, totalId: null, plans: []}, entries: [], foreshadowing: [], graphs: [], lines: []};
+const snapshot = {manifest: {revision: 0, plans: []}, entries: [], foreshadowing: [], graphs: [], lines: []};
 const responses: Record<string, unknown> = {
     open: snapshot,
     snapshot,

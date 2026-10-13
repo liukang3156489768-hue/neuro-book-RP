@@ -13,6 +13,7 @@ import {
     applyReadyForeshadowingAction,
     applyReadyLibraryAction,
     applyReadyLineAction,
+    preparePlanningPublication,
     previewReadyPlanningObjectDeletion,
     previewReadyPlanningPlacementRemoval,
     previewReadyPlanningPlanRemoval,
@@ -28,7 +29,10 @@ import {prepareForeshadowingMarkerRepair, prepareForeshadowingMarkerSuggestion, 
 import {prepareLibraryAction, type LibraryAction} from "nbook/server/outline/library";
 import type {OutlineId} from "nbook/server/outline/format";
 import {prepareLineAction, type LineAction} from "nbook/server/outline/line-planning";
-import {readForeshadowingSnapshot, readPlanningSnapshot} from "nbook/server/outline/index";
+import {parsePlanningFiles, readForeshadowingSnapshot, readPlanningSnapshot} from "nbook/server/outline/index";
+import {preparePlanningMaterialMutations} from "nbook/server/outline/adaptation";
+import {createOutlineRepository} from "nbook/server/outline/repository";
+import {hashText} from "nbook/server/outline/transaction";
 import type {PlanningSnapshot} from "nbook/server/outline/index";
 
 const NonEmpty = Type.String({minLength: 1});
@@ -40,9 +44,20 @@ const ReferenceSchema = Type.Object({
     path: Type.Optional(NonEmpty), locator: Type.Optional(NonEmpty), purpose: Type.Optional(NonEmpty), pending: Type.Optional(Type.Boolean()),
 }, {additionalProperties: false});
 const ReferencesSchema = Type.Array(ReferenceSchema, {maxItems: 64});
+const AdaptationSchema = Type.Union([
+    Type.Object({kind: Type.Literal("chapter"), sourcePlanId: PlanIdSchema, sourceEntryId: OutlineIdSchema}, {additionalProperties: false}),
+    Type.Object({kind: Type.Literal("between"), sourcePlanId: PlanIdSchema, beforeEntryId: OutlineIdSchema, afterEntryId: OutlineIdSchema}, {additionalProperties: false}),
+]);
+const MaterialUpdatesSchema = Type.Array(Type.Object({
+    materialPath: NonEmpty,
+    kind: Type.Union([Type.Literal("experience"), Type.Literal("relationship"), Type.Literal("item"), Type.Literal("location")]),
+    body: NonEmpty,
+}, {additionalProperties: false}), {maxItems: 64});
 const PlantSchema = Type.Object({situation: NonEmpty, presentation: NonEmpty, subtlety: NonEmpty}, {additionalProperties: false});
 const RecoverSchema = Type.Object({condition: NonEmpty, echo: NonEmpty, effect: NonEmpty}, {additionalProperties: false});
 const MetadataFields = {
+    adaptation: Type.Optional(AdaptationSchema),
+    materialUpdates: Type.Optional(MaterialUpdatesSchema),
     materialRefs: Type.Optional(Type.Array(NonEmpty, {maxItems: 64})),
     writingGuidance: Type.Optional(Type.Union([NonEmpty, Type.Null()])),
     references: Type.Optional(ReferencesSchema),
@@ -57,9 +72,10 @@ const CreateEntry = Type.Intersect([
 ]);
 const EditEntry = Type.Intersect([
     Type.Object({kind: Type.Literal("edit-entry"), planId: PlanIdSchema, entryId: OutlineIdSchema,
-        expectedVersion: Type.Integer({minimum: 0}), expectedContentHash: HashSchema, title: NonEmpty, body: Type.String(),
-        confirmGlobal: Type.Optional(Type.Literal(true))}),
+        expectedVersion: Type.Integer({minimum: 0}), expectedContentHash: HashSchema, title: NonEmpty, body: Type.String()}),
     Type.Object({
+        adaptation: Type.Optional(Type.Union([AdaptationSchema, Type.Null()])),
+        materialUpdates: Type.Optional(Type.Union([MaterialUpdatesSchema, Type.Null()])),
         materialRefs: Type.Optional(Type.Union([Type.Array(NonEmpty, {maxItems: 64}), Type.Null()])),
         writingGuidance: Type.Optional(Type.Union([NonEmpty, Type.Null()])),
         references: Type.Optional(Type.Union([ReferencesSchema, Type.Null()])),
@@ -67,8 +83,10 @@ const EditEntry = Type.Intersect([
     }),
 ]);
 const LibraryActionSchema = Type.Union([
-    Type.Object({kind: Type.Literal("create-total"), title: NonEmpty, body: Type.String()}, {additionalProperties: false}),
     Type.Object({kind: Type.Literal("create-plan"), title: NonEmpty}, {additionalProperties: false}),
+    Type.Object({kind: Type.Literal("associate-total"), planId: PlanIdSchema, totalId: OutlineIdSchema,
+        confirmReplace: Type.Optional(Type.Literal(true))}, {additionalProperties: false}),
+    Type.Object({kind: Type.Literal("unshare-total"), planId: PlanIdSchema}, {additionalProperties: false}),
     Type.Object({kind: Type.Literal("rename-plan"), planId: PlanIdSchema, title: NonEmpty}, {additionalProperties: false}),
     CreateEntry,
     Type.Object({kind: Type.Literal("adopt-entry"), planId: PlanIdSchema, entryId: OutlineIdSchema,
@@ -94,7 +112,7 @@ const ForeshadowingContextSchema = Type.Object({
     entryIds: Type.Optional(Type.Array(Type.String({pattern: "^ol-[a-z0-9][a-z0-9-]*$"}), {minItems: 1, maxItems: 8})),
 }, {additionalProperties: false});
 const ForeshadowingSuggestionSchema = Type.Object({
-    action: Type.Union([Type.Literal("strengthen"), Type.Literal("resolve"), Type.Literal("repair")]),
+    action: Type.Union([Type.Literal("plant"), Type.Literal("strengthen"), Type.Literal("resolve"), Type.Literal("repair")]),
     expectedRevision: Type.Integer({minimum: 0}),
     planId: PlanIdSchema,
     entryId: Type.String({pattern: "^ol-[a-z0-9][a-z0-9-]*$"}),
@@ -103,6 +121,7 @@ const ForeshadowingSuggestionSchema = Type.Object({
     expectedContentHash: HashSchema,
     body: Type.String(),
     rationale: NonEmpty,
+    materialUpdates: Type.Optional(Type.Union([MaterialUpdatesSchema, Type.Null()])),
 }, {additionalProperties: false});
 const ForeshadowingMarkerRepairActionSchema = Type.Object({
     kind: Type.Literal("repair-foreshadowing-marker"),
@@ -113,6 +132,7 @@ const ForeshadowingMarkerRepairActionSchema = Type.Object({
     expectedVersion: Type.Integer({minimum: 0}),
     expectedContentHash: HashSchema,
     body: Type.String(),
+    materialUpdates: Type.Optional(Type.Union([MaterialUpdatesSchema, Type.Null()])),
 }, {additionalProperties: false});
 const LineTypeSchema = Type.Union([Type.Literal("main"), Type.Literal("branch"), Type.Literal("character"), Type.Literal("if")]);
 const GraphCasSchema = {planId: PlanIdSchema, expectedGraphVersion: Type.Integer({minimum: 0})};
@@ -170,7 +190,20 @@ const PreviewParametersSchema = Type.Object({
     targetId: Type.Optional(OutlineIdSchema),
     planId: Type.Optional(PlanIdSchema),
 }, {additionalProperties: false});
-const ContextSchema = Type.Object({}, {additionalProperties: false});
+const ContextSchema = Type.Object({
+    mode: Type.Optional(Type.Union([
+        Type.Literal("overview"), Type.Literal("entries"), Type.Literal("plans"), Type.Literal("placements"),
+        Type.Literal("graphs"), Type.Literal("graph-nodes"), Type.Literal("graph-edges"),
+        Type.Literal("lines"), Type.Literal("foreshadowing"), Type.Literal("details"),
+    ], {description: "Omit for a compact overview, or details when entryIds is set. Read other collections only as needed."})),
+    entryIds: Type.Optional(Type.Array(Type.String({pattern: "^ol-[a-z0-9][a-z0-9-]*$"}), {minItems: 1, maxItems: 16, uniqueItems: true,
+        description: "Read only these entries' complete body and metadata; implies details mode."})),
+    planId: Type.Optional(PlanIdSchema),
+    graphId: Type.Optional(Type.String({pattern: "^gr-[a-z0-9][a-z0-9-]*$"})),
+    offset: Type.Optional(Type.Integer({minimum: 0, description: "Collection offset. Use page.nextOffset to continue."})),
+    limit: Type.Optional(Type.Integer({minimum: 1, maximum: 100, description: "Collection page size; defaults to 32."})),
+    expectedRevision: Type.Optional(Type.Integer({minimum: 0, description: "Copy revision when continuing pages to reject a changed snapshot."})),
+}, {additionalProperties: false});
 const UndoSchema = Type.Object({transactionId: NonEmpty}, {additionalProperties: false});
 
 type Mutation = Static<typeof MutationSchema>;
@@ -187,11 +220,22 @@ export function createPlanningTools(): NeuroAgentTool[] {
     return [
         {
             key: "get_planning_context", name: "get_planning_context", label: "读取规划上下文",
-            description: "Read the current ready Project planning snapshot. This is the only planning context entry point; do not read raw outline files.",
+            description: `Read the current ready Project planning snapshot. This is the only planning context entry point; do not read raw outline files.
+
+Omit arguments for a compact overview: revision, counts, up to 32 plan summaries and the first entry-index page. This is not the complete project.
+Use mode=entries/plans/graphs/lines/foreshadowing for a selected collection, optionally filtered by planId. Follow page.nextOffset with offset and copy expectedRevision until it is null. limit defaults to 32 (max 100).
+Plans and graphs contain summaries; read mode=placements with planId for plan topology, or mode=graph-nodes/graph-edges with graphId for graph topology, using the same pagination.
+Pass entryIds (1-16 ol-* ids, implicit mode=details) to read ONLY those entries' complete bodies, metadata, markers and their immediate placement context. No unrelated project collection is repeated. A mode cannot be mixed with selectors belonging to another mode.
+edit-entry replaces the whole body and keeps omitted metadata fields. If an entry already has materialUpdates and its body changes, explicitly send the reviewed complete materialUpdates or null to clear them. Build changes from these details and copy expectedVersion/expectedContentHash from them.`,
             parameters: ContextSchema, executionMode: "parallel", mutatesWorkspace: false,
-            async executeWithContext(context) {
+            async executeWithContext(context, _toolCallId, raw) {
+                const input = parse(ContextSchema, raw ?? {}, "get_planning_context");
                 const snapshot = await currentSnapshot(context);
-                return result("规划上下文", projectContext(snapshot));
+                const details = planningContext(snapshot, input);
+                // 模型可见读取与原始日志可分离；作用域和内容哈希让压缩能识别重复读取，不必裁剪正文。
+                const contextHash = `sha256:${hash(JSON.stringify(details))}`;
+                const text = JSON.stringify({title: "规划上下文", ...details, contextHash});
+                return {content: [{type: "text", text}], details: normalizeToolResultDetails({...details, contextHash})};
             },
         },
         {
@@ -225,6 +269,8 @@ where:
                     && value.kind === "chapter").map(({value, path, contentHash, markers}) => ({
                     id: value.id, path, version: value.version, status: value.status, title: value.title,
                     body: value.body, contentHash, markers,
+                    ...(value.adaptation ? {adaptation: value.adaptation} : {}),
+                    ...(value.materialUpdates ? {materialUpdates: value.materialUpdates} : {}),
                 }));
                 const allStates = deriveForeshadowingStates(snapshot);
                 const states = allStates.filter((state) => !input.foreshadowingId || state.id === input.foreshadowingId);
@@ -267,15 +313,17 @@ Rules:
 3. action must be one of: "plant" (first mention), "reinforce" (strengthen), "recover" (payoff)
 4. Opening and closing tags must match exactly
 5. Markers cannot nest or overlap
-6. For 'strengthen' action, use action="reinforce" in the marker
-7. For 'resolve' action, use action="recover" in the marker
+6. The tool action selects which marker the candidate body must add: 'plant' needs action="plant" (use it for the first plant in a chapter that has no marker yet), 'strengthen' needs action="reinforce", 'resolve' needs action="recover"
+7. 'repair' is only for chapters that get_foreshadowing_context reports as having broken markers
+8. Keep every existing marker unchanged unless the task is to change it; the body is the full new chapter body
+9. If the chapter has materialUpdates, send the complete reviewed materialUpdates (or null to clear them) along with the changed body
 
 Example:
 Original chapter body:
 "第三章内容..."
 
-Updated body for strengthen action:
-"第三章内容...<!-- nb:foreshadow marker="fm-01" foreshadow="fo-b9fd550e" action="reinforce" -->她注意到桌上那条银纹项链<!-- /nb:foreshadow marker="fm-01" -->..."`,
+Updated body for plant action (first marker in the chapter):
+"第三章内容...<!-- nb:foreshadow marker="fm-01" foreshadow="fo-b9fd550e" action="plant" -->她注意到桌上那条银纹项链<!-- /nb:foreshadow marker="fm-01" -->..."`,
             parameters: ForeshadowingSuggestionSchema, executionMode: "parallel", mutatesWorkspace: false,
             async executeWithContext(context, _toolCallId, raw) {
                 const input = parse(ForeshadowingSuggestionSchema, raw, "suggest_foreshadowing_marker") as ForeshadowingMarkerSuggestionInput;
@@ -291,7 +339,8 @@ Updated body for strengthen action:
                         ? {kind: "repair-foreshadowing-marker", planId: input.planId, entryId: input.entryId as OutlineId,
                             expectedRevision: prepared.change.expectedRevision,
                             foreshadowingId: input.foreshadowingId as OutlineId, expectedVersion: input.expectedVersion,
-                            expectedContentHash: input.expectedContentHash, body: input.body}
+                            expectedContentHash: input.expectedContentHash, body: input.body,
+                            ...(input.materialUpdates === undefined ? {} : {materialUpdates: input.materialUpdates})}
                         : prepared.change.action;
                     const change = {...prepared.change, action, proposalId: planningProposalId({...prepared.change, action})};
                     const audit = createPlanningAuditRecord({
@@ -340,7 +389,11 @@ Updated body for strengthen action:
         },
         {
             key: "preview_planning_change", name: "preview_planning_change", label: "预览规划变更",
-            description: "Validate one planning mutation or deletion and return its current revision, impact, proposed files and risks. Preview never writes.",
+            description: `Validate one planning mutation or deletion and return its current revision, impact, proposed files and risks. Preview never writes.
+
+Detail scenes additionally support H3 场景地点 (actual position, movement, existing material link and relevant conditions) and 角色服饰与外观状态 (per-character attire/state/changes). Under each 参与角色 item, indented fields 角色资料 (existing Markdown link), 当前状态 and 外貌要求 are supported. Keep these concise; the writing assistant reads the full lorebook materials and an independent reviewer checks its supplementation. Do not invent paths or create new characters/items/locations.
+
+Detail entries (entryKind "detail") carry all writing information in the body; follow the detail template in the novel-outline-planning references already loaded in context, do not read them by file path. Body: H1 "# 章节总览" with field lines 章节标题, 剧情概括, 核心冲突, 情绪基调, 目标字数 (required, whole-chapter prose target); H1 "# 章节细纲" with one H2 per scene "## 场景1：名称", numbered from 1, each with field lines 场景简述, 字数要求, 人称要求 (all required), 情绪基调, 剧情节奏, then H3 subsections 参与角色 ("- 角色：目的"), 具体情节 (at least one numbered item; the last item is where the scene ends), 描写, 写作指导, 参考资料 (markdown links to project files; an item without a link is pending), 伏笔 (one item per foreshadow, with sub-items 标记: a chapter outline marker id such as fm-01, 状态: 埋设/强化/回收 matching that marker's action, 作用, 效果); H1 "# 禁止事项" listing plot outcomes that must not happen in this chapter (plot only, never style or wording rules). Do not pass writingGuidance, references or targetWords for details; they are not stored.`,
             parameters: PreviewParametersSchema, executionMode: "parallel", mutatesWorkspace: false,
             async executeWithContext(context, _toolCallId, raw) {
                 const preview = parse(PreviewSchema, raw, "preview_planning_change");
@@ -493,7 +546,7 @@ Updated body for strengthen action:
 
 /** 专家写入白名单：条目与伏笔的新增、编辑和确认。删除、解除关系与线路编排都会波及共享对象或固定资格，留给规划助手预览并审核。 */
 const SPECIALIST_COMMIT_KINDS: ReadonlySet<string> = new Set([
-    "create-total", "create-plan", "rename-plan", "create-entry", "adopt-entry", "edit-entry", "move-entry",
+    "create-plan", "associate-total", "unshare-total", "rename-plan", "create-entry", "adopt-entry", "edit-entry", "move-entry",
     "attach-entry", "reorder-entry", "create-foreshadowing", "edit-foreshadowing", "confirm-foreshadowing",
     "repair-foreshadowing-marker",
 ]);
@@ -559,31 +612,122 @@ function parse<TSchema extends import("typebox").TSchema>(schema: TSchema, value
     return value as Static<TSchema>;
 }
 
-function projectContext(snapshot: PlanningSnapshot) {
-    return {
-        revision: snapshot.manifest.revision,
-        totalId: snapshot.manifest.totalId,
-        plans: snapshot.manifest.plans.map((plan) => ({id: plan.id, title: plan.title, placements: plan.placements})),
-        entries: snapshot.entries.map(({value, path, contentHash}) => ({id: value.id, kind: value.kind, status: value.status, title: value.title, version: value.version, contentHash, path})),
-        foreshadowing: deriveForeshadowingStates(snapshot).map((item) => ({id: item.id, status: item.status, sourceCount: item.sources.length, issues: item.issues})),
-        // 线路图摘要：格号是方案内剧情先后，行号只是排版；线路引用节点 id，按格号排序即为线路顺序。
-        graphs: snapshot.graphs.map(({value}) => ({id: value.id, planId: value.planId, version: value.version,
-            nodes: value.nodes.map(({id, entryId, column, row}) => ({id, entryId, column, row,
-                title: entryId === null ? null : snapshot.entries.find((entry) => entry.value.id === entryId)?.value.title ?? null})),
-            edges: value.edges.map(({id, from, to}) => ({id, from, to}))})),
-        lines: snapshot.lines.map(({value, contentHash}) => ({id: value.id, planId: value.planId, title: value.title, type: value.type,
-            fixed: value.fixed, version: value.version, contentHash, nodeIds: value.nodeIds})),
-    };
+function planningContext(snapshot: PlanningSnapshot, input: Static<typeof ContextSchema>) {
+    const mode = input.mode ?? (input.entryIds ? "details" : "overview");
+    const offset = input.offset ?? 0;
+    const limit = input.limit ?? 32;
+    if (input.expectedRevision !== undefined && input.expectedRevision !== snapshot.manifest.revision) {
+        throw new Error("规划版本已变化，请重新读取第一页");
+    }
+    if (mode === "details") {
+        if (!input.entryIds || input.planId || input.graphId || input.offset !== undefined || input.limit !== undefined) {
+            throw new Error("details 仅支持 entryIds 和 expectedRevision，不支持分页或其它筛选条件");
+        }
+        const details = entryDetails(snapshot, input.entryIds);
+        const relatedIds = new Set(details.flatMap((entry) => [entry.parentId, entry.chapterId,
+            ...entry.placements.flatMap((placement) => [placement.parentId, placement.totalId])]).filter((id) => id !== null));
+        for (const id of input.entryIds) relatedIds.delete(id as OutlineId);
+        return {revision: snapshot.manifest.revision, contextScope: {mode, entryIds: [...input.entryIds].sort()}, details,
+            relatedEntries: snapshot.entries.filter(({value}) => relatedIds.has(value.id)).map(entryIndex)};
+    }
+    if (input.entryIds) throw new Error("entryIds 仅支持 details 模式");
+    const topology = mode === "graph-nodes" || mode === "graph-edges";
+    if (input.graphId && !topology) throw new Error("graphId 仅支持 graph-nodes 或 graph-edges 模式");
+    if (mode === "placements" && !input.planId) throw new Error("placements 需要 planId");
+    if (topology && !input.graphId) throw new Error(`${mode} 需要 graphId`);
+    const selectedPlan = input.planId ? snapshot.manifest.plans.find((plan) => plan.id === input.planId) : undefined;
+    if (input.planId && !selectedPlan) throw new Error(`规划方案不存在：${input.planId}`);
+    const base = {revision: snapshot.manifest.revision, contextScope: {mode,
+        ...(input.planId ? {planId: input.planId} : {}), ...(input.graphId ? {graphId: input.graphId} : {}), offset, limit}};
+    const page = (total: number) => ({offset, limit, total, nextOffset: offset + limit < total ? offset + limit : null});
+    const window = <T>(items: readonly T[]) => items.slice(offset, offset + limit);
+    const plans = selectedPlan ? [selectedPlan] : snapshot.manifest.plans;
+    const entryIds = selectedPlan ? new Set(selectedPlan.placements.map((placement) => placement.entryId)) : undefined;
+    const entries = entryIds ? snapshot.entries.filter(({value}) => entryIds.has(value.id)) : snapshot.entries;
+    const graphs = input.planId ? snapshot.graphs.filter(({value}) => value.planId === input.planId) : snapshot.graphs;
+    const lines = input.planId ? snapshot.lines.filter(({value}) => value.planId === input.planId) : snapshot.lines;
+    switch (mode) {
+        case "overview":
+            return {...base, counts: {plans: plans.length, entries: entries.length,
+                foreshadowing: snapshot.foreshadowing.length, graphs: graphs.length, lines: lines.length},
+                plans: plans.slice(0, limit).map(planSummary), plansPage: {...page(plans.length), offset: 0,
+                    nextOffset: limit < plans.length ? limit : null}, entries: window(entries).map(entryIndex), page: page(entries.length)};
+        case "entries":
+            return {...base, entries: window(entries).map(entryIndex), page: page(entries.length)};
+        case "plans":
+            return {...base, plans: window(plans).map(planSummary), page: page(plans.length)};
+        case "placements": {
+            const placements = selectedPlan!.placements;
+            return {...base, plan: planSummary(selectedPlan!), placements: window(placements), page: page(placements.length)};
+        }
+        case "graphs":
+            return {...base, graphs: window(graphs).map(({value, contentHash}) => ({id: value.id, planId: value.planId,
+                version: value.version, contentHash, nodeCount: value.nodes.length, edgeCount: value.edges.length})), page: page(graphs.length)};
+        case "graph-nodes":
+        case "graph-edges": {
+            const graph = graphs.find(({value}) => value.id === input.graphId);
+            if (!graph) throw new Error(`规划线路图不存在：${input.graphId}`);
+            const titles = new Map(snapshot.entries.map(({value}) => [value.id, value.title]));
+            const graphVersion = graph.value.version;
+            // 格号是方案内剧情先后，行号只是排版；分页仅改变传输范围，不改变节点或边的顺序。
+            return mode === "graph-nodes"
+                ? {...base, graphVersion, nodes: window(graph.value.nodes).map((node) => ({...node,
+                    title: node.entryId === null ? null : titles.get(node.entryId) ?? null})), page: page(graph.value.nodes.length)}
+                : {...base, graphVersion, edges: window(graph.value.edges), page: page(graph.value.edges.length)};
+        }
+        case "lines":
+            return {...base, lines: window(lines).map(({value, contentHash}) => ({id: value.id, planId: value.planId,
+                title: value.title, type: value.type, fixed: value.fixed, version: value.version, contentHash, nodeIds: value.nodeIds})),
+                page: page(lines.length)};
+        case "foreshadowing": {
+            const states = deriveForeshadowingStates(snapshot).filter((item) => !input.planId || item.sources.some((source) => source.planId === input.planId));
+            return {...base, foreshadowing: window(states).map((item) => ({id: item.id, status: item.status,
+                sourceCount: item.sources.length, issues: item.issues})), page: page(states.length)};
+        }
+    }
+}
+
+function planSummary(plan: PlanningSnapshot["manifest"]["plans"][number]) {
+    return {id: plan.id, title: plan.title, totalId: plan.totalId, placementCount: plan.placements.length};
+}
+
+function entryIndex({value, path, contentHash}: PlanningSnapshot["entries"][number]) {
+    return {id: value.id, kind: value.kind, status: value.status, title: value.title, parentId: value.parentId,
+        version: value.version, contentHash, path, ...(value.adaptation ? {adaptation: value.adaptation} : {})};
+}
+
+function entryDetails(snapshot: PlanningSnapshot, entryIds: readonly string[]) {
+    const missing = entryIds.filter((id) => !snapshot.entries.some(({value}) => value.id === id));
+    if (missing.length) throw new Error(`规划条目不存在：${missing.join(", ")}`);
+    return entryIds.map((id) => {
+        const {value, path, contentHash, markers} = snapshot.entries.find((entry) => entry.value.id === id)!;
+        const {schema: _schema, ...fields} = value;
+        const placements = snapshot.manifest.plans.flatMap((plan) => plan.placements.filter((placement) => placement.entryId === id)
+            .map((placement) => ({planId: plan.id, totalId: plan.totalId, ...placement})));
+        return {...fields, contentHash, path,
+            // 多于一个方案挂载即为共享条目：非总纲不能原地编辑或移动，只能由用户在工作台写时分叉。
+            planIds: placements.map((placement) => placement.planId), placements,
+            ...(value.kind === "chapter" ? {markers} : {})};
+    });
 }
 
 async function previewChange(ready: NonNullable<ToolExecutionContext["currentProject"]>, snapshot: PlanningSnapshot, change: Preview) {
     if (change.operation === "mutate") {
         const prepared = change.action.kind === "repair-foreshadowing-marker"
             ? await prepareMarkerRepair(ready, change.action as ForeshadowingMarkerRepairAction)
-            : prepareChange(snapshot, change);
+            : prepareChange(snapshot, change, planningCreationSeed(ready, change));
+        const publish = preparePlanningPublication(snapshot, prepared.publish);
+        const files = await createOutlineRepository({projectRoot: ready.workspace.root}).readCanonicalFiles();
+        const candidateFiles = new Map(files.map(file => [file.relativePath, file]));
+        for (const mutation of publish.mutations) {
+            if (mutation.content === null) candidateFiles.delete(mutation.relativePath);
+            else candidateFiles.set(mutation.relativePath, {relativePath: mutation.relativePath, content: mutation.content, contentHash: hashText(mutation.content)});
+        }
+        const candidate = parsePlanningFiles([...candidateFiles.values()]);
+        const materialMutations = await preparePlanningMaterialMutations(ready.workspace.root, snapshot, candidate);
         return {
             kind: "mutation", expectedRevision: change.expectedRevision, nextRevision: change.expectedRevision + 1,
-            action: change.action, files: prepared.publish.mutations.map((mutation) => ({relativePath: mutation.relativePath, contentHash: mutation.content === null ? null : `sha256:${hash(mutation.content)}`, bytes: mutation.content === null ? 0 : Buffer.byteLength(mutation.content)})),
+            action: change.action, files: [...publish.mutations, ...materialMutations].map((mutation) => ({relativePath: mutation.relativePath, contentHash: mutation.content === null ? null : `sha256:${hash(mutation.content)}`, bytes: mutation.content === null ? 0 : Buffer.byteLength(mutation.content)})),
             proposalId: planningProposalId(change),
         };
     }
@@ -603,16 +747,21 @@ async function previewChange(ready: NonNullable<ToolExecutionContext["currentPro
     return {kind: "delete-plan", ...impact, proposalId: planningProposalId(applied)};
 }
 
-function prepareChange(snapshot: PlanningSnapshot, change: Mutation) {
+function prepareChange(snapshot: PlanningSnapshot, change: Mutation, creationSeed?: string) {
     if (change.expectedRevision !== snapshot.manifest.revision) throw new Error("规划版本已变化，请重新读取并预览");
     if (change.action.kind === "repair-foreshadowing-marker") {
         throw new Error("损坏伏笔标记必须从专用修复预览进入");
     }
-    if (isLineAction(change.action)) return prepareLineAction(snapshot, change.action as unknown as LineAction);
+    if (isLineAction(change.action)) return prepareLineAction(snapshot, change.action as unknown as LineAction, creationSeed);
     if (change.action.kind.startsWith("create-foreshadowing") || change.action.kind.startsWith("edit-foreshadowing") || change.action.kind.startsWith("confirm-foreshadowing")) {
-        return prepareForeshadowingAction(snapshot, change.action as ForeshadowingAction);
+        return prepareForeshadowingAction(snapshot, change.action as ForeshadowingAction, creationSeed);
     }
-    return prepareLibraryAction(snapshot, change.action as LibraryAction);
+    return prepareLibraryAction(snapshot, change.action as LibraryAction, creationSeed);
+}
+
+function planningCreationSeed(ready: NonNullable<ToolExecutionContext["currentProject"]>, change: Mutation): string {
+    // 一次提案的创建身份必须跨预览与提交一致；方案 revision 变化后生成新的身份。
+    return `${ready.workspace.root}:${planningProposalId(change)}`;
 }
 
 async function applyChange(ready: NonNullable<ToolExecutionContext["currentProject"]>, change: Change, actor: OperationActor) {
@@ -621,12 +770,13 @@ async function applyChange(ready: NonNullable<ToolExecutionContext["currentProje
             return await repairReadyForeshadowingMarker(ready, change.action as ForeshadowingMarkerRepairAction, actor);
         }
         const snapshot = await readPlanningSnapshot({projectRoot: ready.workspace.root});
-        prepareChange(snapshot, change);
-        if (isLineAction(change.action)) return await applyReadyLineAction(ready, change.action as unknown as LineAction, change.expectedRevision, actor);
+        const creationSeed = planningCreationSeed(ready, change);
+        prepareChange(snapshot, change, creationSeed);
+        if (isLineAction(change.action)) return await applyReadyLineAction(ready, change.action as unknown as LineAction, change.expectedRevision, actor, creationSeed);
         if (change.action.kind.startsWith("create-foreshadowing") || change.action.kind.startsWith("edit-foreshadowing") || change.action.kind.startsWith("confirm-foreshadowing")) {
-            return await applyReadyForeshadowingAction(ready, change.action as ForeshadowingAction, change.expectedRevision, actor);
+            return await applyReadyForeshadowingAction(ready, change.action as ForeshadowingAction, change.expectedRevision, actor, creationSeed);
         }
-        return await applyReadyLibraryAction(ready, change.action as LibraryAction, change.expectedRevision, actor);
+        return await applyReadyLibraryAction(ready, change.action as LibraryAction, change.expectedRevision, actor, creationSeed);
     }
     if (change.operation === "delete-object") {
         return await removeReadyPlanningObject(ready, change.targetId as OutlineId, change.expectedRevision, change.expectedObjectHash, Boolean(change.confirmedTotal), actor);

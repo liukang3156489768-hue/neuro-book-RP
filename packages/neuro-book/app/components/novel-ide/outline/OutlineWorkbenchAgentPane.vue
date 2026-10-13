@@ -3,6 +3,7 @@ import {computed, ref, watch} from "vue";
 import {IconButton, SegmentedControl} from "@notnotype/nb-ui/components";
 import FormSelect from "nbook/app/components/common/form/FormSelect.vue";
 import AgentChatFlow from "nbook/app/components/novel-ide/agent/flow/AgentChatFlow.vue";
+import AgentCompactionStatus from "nbook/app/components/novel-ide/agent/AgentCompactionStatus.vue";
 import AgentChatEmptyState, {type PromptSuggestionItem} from "nbook/app/components/novel-ide/agent/flow/AgentChatEmptyState.vue";
 import AgentComposerInput from "nbook/app/components/novel-ide/agent/composer/AgentComposerInput.vue";
 import AgentUserInputPrompt from "nbook/app/components/novel-ide/agent/composer/AgentUserInputPrompt.vue";
@@ -16,7 +17,9 @@ import {
 } from "nbook/app/components/novel-ide/agent/agent-pending-resolution";
 import type {AgentPendingUserInputSession} from "nbook/app/components/novel-ide/agent/agent-message";
 import type {AgentTriggerMenuState} from "nbook/app/components/novel-ide/agent/trigger-menu";
-import type {OutlineWorkbenchPatch} from "nbook/app/utils/outline/outline-workbench-session";
+import type {OutlineWorkbenchPatch, OutlineWorkbenchSession} from "nbook/app/utils/outline/outline-workbench-session";
+import type {OutlineWorkbenchCreationMode} from "nbook/shared/storage/outline-workbench";
+import {projectOutlineWorkbenchMessage} from "nbook/app/utils/outline/outline-workbench-message";
 
 /**
  * 大纲规划工作台左栏：外观与主 Agent 侧栏保持一致（头部 → 对话流 → 圆角输入卡片），
@@ -26,12 +29,14 @@ import type {OutlineWorkbenchPatch} from "nbook/app/utils/outline/outline-workbe
  */
 const props = defineProps<{
     projectRoot: string | null;
+    planId: string | null;
+    creationMode: OutlineWorkbenchCreationMode;
     mode: "discuss" | "auto";
     modelKey?: string;
     temperature: number;
     thinkingEnabled: boolean;
     modelOptions: readonly {value: string; label: string}[];
-    workbenchSession?: any;  // 工作台会话对象，用于持久化 Agent 会话
+    workbenchSession?: Pick<OutlineWorkbenchSession, "state" | "loading" | "commit">;
 }>();
 const emit = defineEmits<{
     (event: "update:error", value: string | null): void;
@@ -48,11 +53,14 @@ const agent = useOutlineWorkbenchAgent(() => props.projectRoot, {
     modelKey: () => props.modelKey,
     temperature: () => props.temperature,
     thinkingEnabled: () => props.thinkingEnabled,
+    creationMode: () => props.creationMode,
+    planId: () => props.planId,
 }, {
     workbenchSession: props.workbenchSession,
 });
 
 const sessions = computed(() => props.workbenchSession?.state.value.sessions || []);
+const displayMessages = computed(() => agent.messages.value.map(projectOutlineWorkbenchMessage));
 
 async function handleCreateSession(): Promise<void> {
     const newSessionId = await agent.createNewSession();
@@ -85,9 +93,10 @@ function handleViewSpecialistSession(sessionId: number): void {
 const effectiveError = computed(() => pendingError.value || agent.error.value);
 const pendingSessions = computed(() => agent.pendingUserInputSessions.value as readonly AgentPendingUserInputSession[]);
 const submissionIssue = computed<AgentPendingSubmissionIssue | null>(() => pendingError.value ? {kind: "error", message: pendingError.value} : null);
-const busy = computed(() => agent.running.value || agent.pendingSubmission.value);
+const busy = computed(() => agent.running.value || agent.pendingSubmission.value || agent.loading.value || props.workbenchSession?.loading.value === true);
 const canSend = computed(() => Boolean(prompt.value.trim()) && !busy.value);
 const statusText = computed(() => {
+    if (agent.session.compaction.value?.status === "running") return "正在整理上下文…";
     if (agent.running.value) return "正在规划…";
     if (pendingSessions.value.length) return "等待你的确认";
     return agent.messages.value.length ? `${agent.messages.value.length} 条消息` : "暂无消息";
@@ -97,11 +106,26 @@ const statusText = computed(() => {
 const EMPTY_MENU: AgentTriggerMenuState = {title: "", prefix: "", sections: []};
 const resolveMenu = (): AgentTriggerMenuState => EMPTY_MENU;
 
-const suggestions: PromptSuggestionItem[] = [
+const originalSuggestions: PromptSuggestionItem[] = [
     {id: "master", icon: "i-lucide-library", iconColorClass: "text-sky-500", prompt: "根据我的故事方向生成一份总纲草案，包含核心冲突、主题、主要阶段和结局方向。"},
     {id: "foreshadow", icon: "i-lucide-book-marked", iconColorClass: "text-amber-500", prompt: "检查当前伏笔库：哪些伏笔还没有埋设，哪些已埋设但迟迟没有回收？"},
     {id: "lines", icon: "i-lucide-git-branch", iconColorClass: "text-emerald-500", prompt: "分析当前线路规划，找出断链、停滞过久或与主线冲突的节点。"},
 ];
+const adaptationSuggestions: PromptSuggestionItem[] = [
+    {id: "adapt-structure", icon: "i-lucide-library", iconColorClass: "text-sky-500", prompt: "我想参考已提取大纲进行结构改编。请先确认来源与保留项，按需了解已有角色的人设、经历和关系；写作手法与素材先读索引再读选中的正文，然后讨论新的规划。"},
+    {id: "adapt-plot", icon: "i-lucide-book-marked", iconColorClass: "text-amber-500", prompt: "我想在原作剧情基础上改编。请先询问我要基于哪个来源章节，以及想改变哪些内容，再结合当前方案已有大纲和相关角色经历、关系检查衔接。"},
+    {id: "adapt-insert", icon: "i-lucide-git-branch", iconColorClass: "text-emerald-500", prompt: "我想在原作的两个章节之间新增原创章节。请先确认前后来源章节及当前方案中的插入位置，再按需读取已有改编大纲，规划能够衔接前后剧情的新章节。"},
+];
+const suggestions = computed(() => props.creationMode === "adaptation" ? adaptationSuggestions : originalSuggestions);
+const creationModeOptions = computed(() => [
+    {value: "original", label: "原创", title: "原创规划：按需借鉴提取素材", disabled: busy.value || pendingSessions.value.length > 0 || agent.creationModeLocked.value},
+    {value: "adaptation", label: "改编", title: "改编规划：支持结构改编、剧情改编和插入原创章节", disabled: busy.value || pendingSessions.value.length > 0 || agent.creationModeLocked.value},
+]);
+
+function changeCreationMode(value: unknown): void {
+    if (agent.creationModeLocked.value || busy.value || pendingSessions.value.length > 0) return;
+    emit("update:settings", {creationMode: value === "adaptation" ? "adaptation" : "original"});
+}
 
 const modeOptions = [
     {value: "discuss", label: "讨论", title: "讨论模式：正式变更先展示，确认后再写入"},
@@ -200,6 +224,8 @@ watch(() => props.thinkingEnabled, (enabled) => { void changeRuntime({command: "
             />
         </header>
 
+        <AgentCompactionStatus :state="agent.session.compaction.value" />
+
         <OutlineAgentSessionList
             v-if="showSessionList"
             :sessions="sessions"
@@ -213,7 +239,7 @@ watch(() => props.thinkingEnabled, (enabled) => { void changeRuntime({command: "
 
         <div v-else class="outline-agent-stream" aria-live="polite">
             <AgentChatFlow
-                :messages="agent.messages.value"
+                :messages="displayMessages"
                 :session-id="agent.activeSessionId.value"
                 :running="agent.running.value"
                 mode="main"
@@ -249,6 +275,16 @@ watch(() => props.thinkingEnabled, (enabled) => { void changeRuntime({command: "
             />
 
             <div v-else class="composer-card">
+                <div class="creation-toolbar">
+                    <span>创作方式</span>
+                    <SegmentedControl
+                        size="sm"
+                        aria-label="创作方式"
+                        :model-value="props.creationMode"
+                        :options="creationModeOptions"
+                        @update:model-value="changeCreationMode"
+                    />
+                </div>
                 <AgentComposerInput
                     v-model="prompt"
                     borderless
@@ -333,6 +369,8 @@ watch(() => props.thinkingEnabled, (enabled) => { void changeRuntime({command: "
 .pane-error span { flex: 0 0 auto; margin-top: 2px; }
 .composer-card { display: flex; flex-direction: column; border: 1px solid var(--border-color); border-radius: 0.75rem; background: var(--bg-panel); transition: border-color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard); }
 .composer-card:focus-within { border-color: var(--accent-main); box-shadow: 0 0 0 1px var(--accent-main); }
+.creation-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-bottom: var(--border-w) solid var(--divider); }
+.creation-toolbar > span { color: var(--text-secondary); font-size: var(--text-2xs); white-space: nowrap; }
 .composer-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); border-top: 1px solid var(--border-color); padding: var(--space-3) var(--space-4); }
 .toolbar-model { min-width: 96px; flex: 1 1 120px; }
 .temperature { display: inline-flex; height: 26px; align-items: center; border-radius: var(--radius-control); background: color-mix(in srgb, var(--text-main) 8%, transparent); }

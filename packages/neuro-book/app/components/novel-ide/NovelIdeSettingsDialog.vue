@@ -6,6 +6,8 @@ import FormSelect from "nbook/app/components/common/form/FormSelect.vue";
 import NovelIdeSettingsView from "nbook/app/components/novel-ide/settings/sections/NovelIdeSettingsView.vue";
 import type {SettingsScopeId, SettingsScopeOption, SettingsSectionOption} from "nbook/app/components/novel-ide/settings/sections/NovelIdeSettingsView.types";
 import AgentProfileSettingsView from "nbook/app/components/novel-ide/settings/sections/agent-profile/AgentProfileSettingsView.vue";
+import PromptManagementSettingsView from "nbook/app/components/novel-ide/settings/sections/prompt-management/PromptManagementSettingsView.vue";
+import SummarizerSettingsView from "nbook/app/components/novel-ide/settings/sections/summarizer/SummarizerSettingsView.vue";
 import type {AgentProfileSettingsContext, AgentProfileSettingsPageDraft} from "nbook/app/components/novel-ide/settings/sections/agent-profile/AgentProfileSettingsView.types";
 import {
     buildAgentProfileContext,
@@ -32,13 +34,14 @@ import {useNovelIdeStore} from "nbook/app/stores/novel-ide";
 import {useConfigApi} from "nbook/app/composables/useConfigApi";
 import {useCostDisplay} from "nbook/app/composables/useCostDisplay";
 import {useProviderSettingsBinding} from "nbook/app/composables/useProviderSettingsBinding";
+import {usePromptManagementSettings} from "nbook/app/composables/usePromptManagementSettings";
 import {useSectionDraft} from "nbook/app/composables/useSectionDraft";
 import {useSettingsWindowSize} from "nbook/app/utils/workbench/window-size-session";
 import {WORKBENCH_SETTINGS_WINDOW_MIN_SIZE} from "nbook/shared/storage/workbench-window-sizes";
 import {useDelayedFlag, useSettingsSnapshot} from "nbook/app/composables/useSettingsSnapshot";
 import {resolveApiErrorMessage} from "nbook/app/utils/api-error";
 import {cloneModelDraft} from "nbook/app/components/novel-ide/settings/sections/agent-profile/agent-profile-draft";
-import {createProfileRuntimeSettingsDraft} from "nbook/app/components/novel-ide/settings/sections/agent-profile/profile-runtime-settings";
+import {createProfileRuntimeSettingsDraft, parseProfileRuntimeSettingsDraft, resolveAgentRuntimeDefaultsBaseline} from "nbook/app/components/novel-ide/settings/sections/agent-profile/profile-runtime-settings";
 import type {AgentProfilePageSource} from "nbook/app/components/novel-ide/settings/sections/agent-profile/agent-profile-page-draft";
 import {createEmbeddingSettingsDraft} from "nbook/app/components/novel-ide/settings/sections/embedding/embedding-settings-draft";
 import type {CostDisplayCurrency} from "nbook/app/utils/cost-format";
@@ -51,10 +54,12 @@ import {filterColorwayContractVars} from "nbook/app/utils/theme/colorway-vars";
 import {buildColorwayFileJson, colorwayFileName} from "nbook/app/utils/theme/colorway-io";
 import type {ColorwayDraft} from "nbook/app/components/novel-ide/settings/sections/frontend/FrontendSettingsView.types";
 import type {ConfigAgentProfileSettingsDto, ConfigEditorSnapshotDto, ConfigWorkspaceQueryDto, GlobalConfigDto, GlobalConfigUpdateDto, ProjectConfigDto, WebConfigDto} from "nbook/shared/dto/config.dto";
+import type {PromptCatalogDto} from "nbook/shared/dto/prompt-management.dto";
+import type {TavernPreviewRequest, TavernPreviewResult} from "nbook/shared/dto/tavern-preset.dto";
 import {DEFAULT_DESKTOP_SETTINGS, type DesktopCloseBehavior, type DesktopSettings, type DesktopStatus} from "@notnotype/neuro-book-contracts/desktop";
 import {DEFAULT_MARKDOWN_EDITOR_PREFERENCES, DEFAULT_MONACO_EDITOR_PREFERENCES, type MarkdownEditorPreferences, type MonacoEditorPreferences} from "nbook/shared/editor-workbench";
 
-type SettingsSection = "security" | "frontend" | "editor" | "providers" | "embedding" | "cost" | "web-tools" | "agent-profile-models" | "observability" | "desktop";
+type SettingsSection = "security" | "frontend" | "editor" | "providers" | "embedding" | "summarizer-model" | "cost" | "web-tools" | "agent-profile-models" | "prompt-management" | "observability" | "desktop";
 type AppVersionKind = "release" | "tag" | "commit" | "package";
 
 interface AppVersionDto {
@@ -109,6 +114,13 @@ const sectionItems = computed<SettingsSectionOption[]>(() => [
         scopes: ["global"],
     },
     {
+        value: "summarizer-model",
+        label: t("settings.section.summarizerModel.label"),
+        description: t("settings.section.summarizerModel.description"),
+        iconClass: "i-lucide-scan-text",
+        scopes: ["global"],
+    },
+    {
         value: "cost",
         label: t("settings.section.cost.label"),
         description: t("settings.section.cost.description"),
@@ -129,6 +141,14 @@ const sectionItems = computed<SettingsSectionOption[]>(() => [
         iconClass: "i-lucide-bot-message-square",
         scopes: ["global", "project"],
         // 两栏型：外壳不给内边距、也不再套一层滚动，由视图自己管左右两栏各自的滚动。
+        layout: "fill",
+    },
+    {
+        value: "prompt-management",
+        label: t("settings.section.promptManagement.label"),
+        description: t("settings.section.promptManagement.description"),
+        iconClass: "i-lucide-messages-square",
+        scopes: ["global"],
         layout: "fill",
     },
     {
@@ -214,6 +234,17 @@ const costDisplay = useCostDisplay();
 const costRefreshing = ref(false);
 const desktopSaving = ref(false);
 const desktopSaveError = ref("");
+const promptSettings = usePromptManagementSettings({
+    enabled: () => props.modelValue && activeScope.value === "global" && activeSection.value === "prompt-management",
+    read: () => $fetch<PromptCatalogDto>("/api/prompt-management"),
+    write: (mutation) => $fetch<PromptCatalogDto>("/api/prompt-management", {method: "POST", body: mutation}),
+});
+function previewTavernPreset(request: TavernPreviewRequest): Promise<TavernPreviewResult> {
+    return $fetch<TavernPreviewResult>("/api/prompt-management/tavern-preview", {method: "POST", body: request});
+}
+function downloadTavernPreset(name: string, contents: string): void {
+    triggerBrowserDownload(new Blob([contents], {type: "application/json"}), name);
+}
 
 /**
  * 写回上下文：这份草稿是按哪个配置目标、以及当时未编辑的基准段构建的。
@@ -267,6 +298,17 @@ const embeddingDraft = useSectionDraft({
     fallbackErrorMessage: t("settings.feedback.saveFailed"),
 });
 
+/** 摘要模型：只保存一个全局模型引用，连接参数仍由 Provider 区段维护。 */
+const summarizerModelDraft = useSectionDraft<string | null, NonNullable<GlobalConfigUpdateDto["agent"]>, SectionWriteContext & {baseAgent: NonNullable<GlobalConfigDto["agent"]>}>({
+    source: () => settingsSnapshot.snapshot.value?.global.agent?.summarizerModelKey ?? null,
+    create: (source) => typeof source === "string" && source.trim() ? source.trim() : null,
+    toPayload: (draft, context) => ({...context.baseAgent, summarizerModelKey: draft}),
+    write: (payload, context) => configApi.saveGlobal({agent: payload}, context.query),
+    captureContext: () => ({...writeContext(), baseAgent: settingsSnapshot.snapshot.value?.global.agent ?? {}} as SectionWriteContext & {baseAgent: NonNullable<GlobalConfigDto["agent"]>}),
+    notifyError: notifySaveFailed,
+    fallbackErrorMessage: t("settings.feedback.saveFailed"),
+});
+
 /** 费用显示：币种进配置，汇率留在本机会话。 */
 const costDraft = useSectionDraft({
     source: () => settingsSnapshot.snapshot.value?.global.ui ?? null,
@@ -303,6 +345,7 @@ const agentProfileMetaKey = ref("");
 const agentProfileMetaLoading = ref(false);
 const agentProfileLoadError = ref("");
 const agentProfileActive = computed(() => activeSection.value === "agent-profile-models");
+const summarizerActive = computed(() => activeSection.value === "summarizer-model");
 const agentProfileOptions = computed(() => ({
     workspaceSlot: novelIdeStore.workspaceKind === "user-assets" ? "userAssets" as const : "novel" as const,
 }));
@@ -357,7 +400,7 @@ async function loadAgentProfileMeta(): Promise<void> {
 
 /** Profile meta 只在这个区段真的被打开时才取：没进过的区段不发请求，打开后换目标才重取。 */
 watch(
-    [agentProfileActive, snapshotEnabled, () => JSON.stringify(targetQuery.value)],
+    [computed(() => agentProfileActive.value || summarizerActive.value), snapshotEnabled, () => JSON.stringify(targetQuery.value)],
     ([active, enabled]) => {
         if (active && enabled) {
             void loadAgentProfileMeta();
@@ -392,6 +435,16 @@ const agentProfileDraft = useSectionDraft({
     notifyError: notifySaveFailed,
     fallbackErrorMessage: t("settings.feedback.saveFailed"),
 });
+
+/** 摘要页复用 Agent Profile 的全局运行时合同，避免维护第二套压缩阈值配置。 */
+const summarizerRuntimeBaseline = computed(() => {
+    const meta = agentProfileMeta.value;
+    if (!meta || agentProfileMetaKey.value !== agentProfileMetaTargetKey() || activeScope.value !== "global") {
+        return null;
+    }
+    return resolveAgentRuntimeDefaultsBaseline(meta.harnessRuntimeDefaults, "global", meta.globalRuntimeDefaultsPatch);
+});
+const summarizerRuntimeErrors = computed(() => parseProfileRuntimeSettingsDraft(agentProfileDraft.draft.value.runtimeDefaults).errors);
 
 const agentProfileReady = computed(() => agentProfileSourceValue() !== null
     && agentProfileMetaKey.value === agentProfileMetaTargetKey()
@@ -442,13 +495,14 @@ watch([agentProfileActive, agentProfileDraft.draft], ([active, draft]) => {
 
 /** 有没有区段正在写盘（含 Provider 会话）。 */
 const anySectionSaving = computed(() => webDraft.saving.value || embeddingDraft.saving.value || costDraft.saving.value
-    || observabilityDraft.saving.value || agentProfileDraft.saving.value || providerBinding.saving.value);
+    || summarizerModelDraft.saving.value || observabilityDraft.saving.value || agentProfileDraft.saving.value || providerBinding.saving.value || promptSettings.saving.value);
 
 /** 把各区段未落盘的改动一次写完；不阻塞调用方（上下文已随草稿捕获）。 */
 function flushSectionDrafts(): Promise<unknown> {
     return Promise.all([
         webDraft.flush(),
         embeddingDraft.flush(),
+        summarizerModelDraft.flush(),
         costDraft.flush(),
         observabilityDraft.flush(),
         agentProfileDraft.flush(),
@@ -514,6 +568,9 @@ const providerBinding = useProviderSettingsBinding({
  * 这些取数折进外壳的同一块加载占位——一个区段在任何时刻只会有一个加载呈现。
  */
 const activeSectionReady = computed(() => {
+    if (activeSection.value === "prompt-management") {
+        return !promptSettings.loading.value && Boolean(promptSettings.catalog.value || promptSettings.loadError.value);
+    }
     if (activeSection.value === "providers") {
         // 重新读取期间也不算就绪：避免上一轮的数据先渲染一帧再被替换。
         return providerBinding.loaded.value && !providerBinding.loading.value;
@@ -529,12 +586,19 @@ const settingsLoading = computed(() => settingsSnapshot.loading.value || !active
 const settingsLoaderVisible = useDelayedFlag(() => settingsLoading.value, 200);
 /** 当前区段的失败原因：快照失败或该区段自带取数失败。 */
 const settingsLoadError = computed(() => settingsSnapshot.loadError.value
-    || (activeSection.value === "agent-profile-models" ? agentProfileLoadError.value : ""));
+    || (activeSection.value === "agent-profile-models" || activeSection.value === "summarizer-model" ? agentProfileLoadError.value : "")
+    || (activeSection.value === "prompt-management" ? promptSettings.loadError.value : ""));
 
 /** 重试：快照 + 当前区段自带的取数。 */
 function reloadSettings(): void {
     void settingsSnapshot.reload();
+    if (activeSection.value === "prompt-management") {
+        void promptSettings.load();
+    }
     if (activeSection.value === "agent-profile-models") {
+        void loadAgentProfileMeta();
+    }
+    if (activeSection.value === "summarizer-model") {
         void loadAgentProfileMeta();
     }
     if (activeSection.value === "providers") {
@@ -922,6 +986,19 @@ async function updateDesktopSettings(patch: Partial<Pick<DesktopSettings, "zoomF
                             @update:model-value="embeddingDraft.draft.value = $event"
                         />
 
+                        <SummarizerSettingsView
+                            v-else-if="section?.value === 'summarizer-model'"
+                            :model-value="summarizerModelDraft.draft.value"
+                            :enabled-models="settingsSnapshot.snapshot.value?.modelSettings.enabledModels ?? []"
+                            :runtime-defaults="agentProfileDraft.draft.value.runtimeDefaults"
+                            :runtime-effective="summarizerRuntimeBaseline?.settings ?? null"
+                            :runtime-sources="summarizerRuntimeBaseline?.sources ?? null"
+                            :runtime-errors="summarizerRuntimeErrors"
+                            :disabled="settingsLoading"
+                            @update:model-value="summarizerModelDraft.draft.value = $event"
+                            @update:runtime-defaults="agentProfileDraft.draft.value.runtimeDefaults = $event"
+                        />
+
                         <!-- 费用显示（币种进配置，汇率是本机会话状态） -->
                         <CostSettingsView
                             v-else-if="section?.value === 'cost'"
@@ -950,6 +1027,15 @@ async function updateDesktopSettings(patch: Partial<Pick<DesktopSettings, "zoomF
                             :context="agentProfileContext()!"
                             :show-nav-heading="false"
                             @update:model-value="agentProfileDraft.draft.value = $event"
+                        />
+
+                        <PromptManagementSettingsView
+                            v-else-if="props.modelValue && section?.value === 'prompt-management' && promptSettings.catalog.value"
+                            :catalog="promptSettings.catalog.value"
+                            :saving="promptSettings.saving.value"
+                            :mutate="promptSettings.mutate"
+                            :preview="previewTavernPreset"
+                            :download="downloadTavernPreset"
                         />
 
                         <!-- 可观测（Pi 请求 trace） -->

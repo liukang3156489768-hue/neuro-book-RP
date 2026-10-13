@@ -26,6 +26,8 @@ export const OUTLINE_WORKBENCH_VIEWS = ["library", "foreshadowing", "lines"] as 
 export type OutlineWorkbenchView = (typeof OUTLINE_WORKBENCH_VIEWS)[number];
 export const OUTLINE_WORKBENCH_MODES = ["discuss", "auto"] as const;
 export type OutlineWorkbenchMode = (typeof OUTLINE_WORKBENCH_MODES)[number];
+export const OUTLINE_WORKBENCH_CREATION_MODES = ["original", "adaptation"] as const;
+export type OutlineWorkbenchCreationMode = (typeof OUTLINE_WORKBENCH_CREATION_MODES)[number];
 
 export type OutlineWorkbenchRecord = {
     readonly agentWidth?: number;
@@ -34,12 +36,15 @@ export type OutlineWorkbenchRecord = {
     readonly modelKey?: string;
     readonly temperature?: number;
     readonly mode?: OutlineWorkbenchMode;
+    readonly creationMode?: OutlineWorkbenchCreationMode;
     /** 当前活动的 Agent 会话 ID（持久化会话，退出工作台后仍保留） */
     readonly activeSessionId?: number | null;
     /** 会话历史列表（用于会话管理） */
     readonly sessions?: readonly Readonly<{
         sessionId: number;
         title?: string;
+        creationMode?: OutlineWorkbenchCreationMode;
+        started?: boolean;
         createdAt: number;
         lastActiveAt: number;
     }>[];
@@ -65,16 +70,18 @@ function isSafeSessionId(value: unknown): value is number {
     return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
-function isSessionEntry(value: unknown): value is {sessionId: number; title?: string; createdAt: number; lastActiveAt: number} {
+function isSessionEntry(value: unknown): value is {sessionId: number; title?: string; creationMode?: OutlineWorkbenchCreationMode; started?: boolean; createdAt: number; lastActiveAt: number} {
     if (!isRecordObject(value)) return false;
     const entry = value as Record<string, unknown>;
     return isSafeSessionId(entry.sessionId)
         && (entry.title === undefined || (typeof entry.title === "string" && entry.title.length <= 200))
+        && (entry.creationMode === undefined || (OUTLINE_WORKBENCH_CREATION_MODES as readonly string[]).includes(entry.creationMode as string))
+        && (entry.started === undefined || typeof entry.started === "boolean")
         && typeof entry.createdAt === "number" && Number.isSafeInteger(entry.createdAt)
         && typeof entry.lastActiveAt === "number" && Number.isSafeInteger(entry.lastActiveAt);
 }
 
-function isSessionArray(value: unknown): value is readonly {sessionId: number; title?: string; createdAt: number; lastActiveAt: number}[] {
+function isSessionArray(value: unknown): value is readonly {sessionId: number; title?: string; creationMode?: OutlineWorkbenchCreationMode; started?: boolean; createdAt: number; lastActiveAt: number}[] {
     return Array.isArray(value) && value.length <= 100 && value.every(isSessionEntry);
 }
 
@@ -87,6 +94,7 @@ export function isOutlineWorkbenchRecord(value: unknown): value is OutlineWorkbe
         && (candidate.modelKey === undefined || (typeof candidate.modelKey === "string" && candidate.modelKey.length > 0 && candidate.modelKey.length <= 256))
         && (candidate.temperature === undefined || isTemperature(candidate.temperature))
         && (candidate.mode === undefined || (OUTLINE_WORKBENCH_MODES as readonly string[]).includes(candidate.mode))
+        && (candidate.creationMode === undefined || (OUTLINE_WORKBENCH_CREATION_MODES as readonly string[]).includes(candidate.creationMode))
         && (candidate.activeSessionId === undefined || candidate.activeSessionId === null || isSafeSessionId(candidate.activeSessionId))
         && (candidate.sessions === undefined || isSessionArray(candidate.sessions));
 }

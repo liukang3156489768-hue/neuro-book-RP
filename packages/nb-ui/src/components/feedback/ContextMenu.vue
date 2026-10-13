@@ -32,7 +32,8 @@ function close(): void {
 
 /** 点击/右键菜单外部时关闭 */
 function closeOnOutside(event: MouseEvent): void {
-    if (!props.visible || menuRef.value?.contains(event.target as Node)) {
+    const target = event.target;
+    if (!props.visible || menuRef.value?.contains(target as Node) || (target instanceof Element && target.closest("[data-menu-panel]"))) {
         return;
     }
     emit("close");

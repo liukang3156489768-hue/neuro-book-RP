@@ -1,5 +1,6 @@
 import type {AgentChatEntryDto, AgentChatUserEntryDto} from "nbook/shared/dto/agent-public-event.dto";
 import type {
+    AgentCompactionStateDto,
     AgentPendingUserInputDto,
     AgentRuntimeStreamEventDto,
     AgentSessionEventDto,
@@ -24,6 +25,7 @@ import {
     type AgentPendingUserInputSession,
 } from "nbook/app/components/novel-ide/agent/agent-message";
 import {optimisticUserMessage} from "nbook/app/components/novel-ide/agent/agent-user-message-markdown";
+import {acceptsCompactionUpdate, restoreCompactionState} from "nbook/app/components/novel-ide/agent/agent-compaction-state";
 
 export type AgentConnectionStatus = "idle" | "connecting" | "connected" | "reconnecting" | "recovering" | "disconnected";
 
@@ -96,6 +98,8 @@ export function useAgentSession() {
     const optimisticMessages = shallowRef<AgentMessage[]>([]);
     const liveRunStatus = ref<"idle" | "running" | "waiting" | "aborting">("idle");
     const runPhase = ref<AgentRunPhase>("idle");
+    const activeRuntimeInvocationId = ref<string | null>(null);
+    const compaction = shallowRef<AgentCompactionStateDto | null>(null);
     const connectionStatus = ref<AgentConnectionStatus>("idle");
     const pendingUserInputSessions = shallowRef<AgentPendingUserInputSession[]>([]);
     const eventEpoch = ref<string | null>(null);
@@ -239,6 +243,8 @@ export function useAgentSession() {
         optimisticMessages.value = [];
         liveRunStatus.value = "idle";
         runPhase.value = "idle";
+        activeRuntimeInvocationId.value = null;
+        compaction.value = null;
         connectionStatus.value = "idle";
         pendingUserInputSessions.value = [];
         eventEpoch.value = null;
@@ -360,6 +366,7 @@ export function useAgentSession() {
             }));
         }
         applyRunState(payload.activeInvocation, payload.pendingUserInputs);
+        compaction.value = restoreCompactionState(payload.compaction, activeRuntimeInvocationId.value);
         pendingUserInputSessions.value = payload.pendingUserInputs
             .map((pending) => toPendingUserInputSession(pending, messages.value))
             .filter((session): session is AgentPendingUserInputSession => session !== null);
@@ -528,8 +535,10 @@ export function useAgentSession() {
             effectiveThinkingLevel: state.effectiveThinkingLevel,
             agentMode: state.agentMode,
             contextUsage: state.contextUsage,
+            compaction: state.compaction,
         };
         applyRunState(state.activeInvocation, pendingUserInputs);
+        compaction.value = restoreCompactionState(state.compaction, activeRuntimeInvocationId.value);
         pendingUserInputSessions.value = pendingUserInputs
             .map((pending: AgentPendingUserInputDto) => toPendingUserInputSession(pending, messages.value))
             .filter((session): session is AgentPendingUserInputSession => session !== null);
@@ -547,6 +556,7 @@ export function useAgentSession() {
 
     /** 应用一次 session event envelope。 */
     const applyEvent = (payload: AgentSessionEventDto): void => {
+        if (recoveryShell.value && payload.sessionId !== recoveryShell.value.summary.sessionId) return;
         if (payload.kind === "session" && payload.event.type === "connected") {
             const epochChanged = eventEpoch.value !== null && eventEpoch.value !== payload.event.eventEpoch;
             const cursorAheadOfStream = payload.event.latestSeq < lastSeq.value;
@@ -578,6 +588,22 @@ export function useAgentSession() {
         lastSeq.value = payload.seq;
 
         if (payload.kind === "runtime") {
+            if (payload.event.type === "agent_start") {
+                if (activeRuntimeInvocationId.value !== null && activeRuntimeInvocationId.value !== payload.invocationId) return;
+                activeRuntimeInvocationId.value = payload.invocationId ?? null;
+                if (compaction.value?.invocationId !== payload.invocationId) compaction.value = null;
+            }
+            if (payload.event.type === "compaction_update") {
+                if (payload.event.state.invocationId === payload.invocationId
+                    && acceptsCompactionUpdate(compaction.value, payload.event.state, activeRuntimeInvocationId.value)) {
+                    compaction.value = payload.event.state;
+                }
+                return;
+            }
+            if (payload.event.type === "agent_end" && payload.invocationId === activeRuntimeInvocationId.value) {
+                activeRuntimeInvocationId.value = null;
+                if (compaction.value?.status === "running") compaction.value = null;
+            }
             if (payload.event.type === "message_update") {
                 queuePendingMessageUpdate(payload.event, payload.invocationId);
                 applyRuntimePhase(payload.event);
@@ -664,6 +690,7 @@ export function useAgentSession() {
 
     /** 根据恢复/live shell 同步运行阶段。 */
     function applyRunState(activeInvocation: AgentSessionRecoveryDto["activeInvocation"], pendingInputs: AgentPendingUserInputDto[]): void {
+        activeRuntimeInvocationId.value = activeInvocation?.invocationId ?? null;
         if (activeInvocation) {
             liveRunStatus.value = activeInvocation.status === "waiting" ? "waiting" : activeInvocation.status;
             runPhase.value = pendingInputs.length > 0 ? "waiting_user" : runPhase.value === "idle" ? "model_pending" : runPhase.value;
@@ -685,6 +712,7 @@ export function useAgentSession() {
         applyRelations,
         clearRecoveryRequest,
         connectionStatus,
+        compaction: shallowReadonly(compaction),
         durableEntries,
         eventEpoch,
         hasPrevious,

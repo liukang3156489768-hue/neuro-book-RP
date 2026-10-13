@@ -6,7 +6,10 @@ import {createTestTmpRoot} from "@notnotype/neuro-book-test-support/tmp";
 import type {ReadyProjectSessionRef} from "nbook/server/workspace-files/project-session-types";
 import {contentHash, createEmptyManifest, parseEntryMarkdown, serializeEntryMarkdown, serializeForeshadowingMarkdown, serializeManifest, serializeGraphYaml, serializeLineYaml, type OutlineEntry, type OutlineGraph, type OutlineLine} from "./format";
 import {publishOutlineFiles} from "./transaction";
+import {sceneDetail} from "./detail.fixture";
 import {publishPlanningFiles, readPlanningSnapshot} from "./index";
+import {prepareLibraryAction} from "./library";
+import {adaptationRecordPath} from "./adaptation";
 
 const model = vi.hoisted(() => ({complete: vi.fn()}));
 vi.mock("./direction-model", () => ({completeDirectionWithModel: model.complete}));
@@ -46,6 +49,45 @@ beforeEach(() => {
 });
 
 describe("outline ready Project host", () => {
+    it("规划关联记录与大纲一起归因、修改和撤销，不把计划当作基础素材", async () => {
+        const projectRoot = await createTestTmpRoot("outline-host", "adaptation-history-contract");
+        roots.push(projectRoot);
+        const {createOutlineRepository} = await import("./repository");
+        await createOutlineRepository({projectRoot}).ensureLayout(serializeManifest(createEmptyManifest()));
+        const created = prepareLibraryAction(await readPlanningSnapshot({projectRoot}), {kind: "create-plan", title: "新小说"});
+        await publishPlanningFiles({projectRoot}, created.publish);
+        const materialPath = "lorebook/character/主角/index.md";
+        await fs.mkdir(path.join(projectRoot, "lorebook/character/主角"), {recursive: true});
+        await fs.writeFile(path.join(projectRoot, materialPath), "原有基础人设");
+        const ready = {publicId: "ready-adaptation", workspace: {root: projectRoot}} as ReadyProjectSessionRef;
+        const fileIndex = {mutate: vi.fn(async <T>(operation: () => Promise<T>) => operation())};
+        mocks.requireReadyModuleHandle.mockImplementation((_ready, token: {name: string}) => token.name === "file-index" ? fileIndex : {});
+        mocks.runReadyProjectOperation.mockImplementation(async (_ready, operation) =>
+            operation(new AbortController().signal, () => undefined, async () => undefined));
+        const {applyReadyLibraryAction, undoReadyPlanningFiles} = await import("./host");
+        const actor = {kind: "user" as const, userId: "local"};
+        const update = {materialPath, kind: "experience" as const, body: "第一次进城"};
+        const action = {kind: "create-entry" as const, planId: created.planId!, parentId: created.entryId!,
+            entryKind: "chapter" as const, title: "出发", body: "故事计划", materialUpdates: [update]};
+        const expected = prepareLibraryAction(await readPlanningSnapshot({projectRoot}), action, "project:confirmed-proposal");
+        const chapter = await applyReadyLibraryAction(ready, action, 1, actor, "project:confirmed-proposal");
+        expect(chapter.entryId).toBe(expected.entryId);
+        const record = adaptationRecordPath(update, created.planId!, chapter.entryId!);
+        expect(mocks.recordProjectWrite).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+            relativePath: record, before: null, after: expect.any(Uint8Array), actor,
+        }));
+        const saved = (await readPlanningSnapshot({projectRoot})).entries.find(({value}) => value.id === chapter.entryId)!;
+        const revised = await applyReadyLibraryAction(ready, {kind: "edit-entry", planId: created.planId!, entryId: chapter.entryId!,
+            title: "出发", body: "调整计划", expectedVersion: saved.value.version, expectedContentHash: saved.contentHash,
+            materialUpdates: [{...update, body: "第二次进城"}]}, 2, actor);
+        expect(await fs.readFile(path.join(projectRoot, record), "utf8")).toContain("第二次进城");
+        await undoReadyPlanningFiles(ready, revised.transactionId, actor);
+        expect(await fs.readFile(path.join(projectRoot, record), "utf8")).toContain("第一次进城");
+        await undoReadyPlanningFiles(ready, chapter.transactionId, actor);
+        await expect(fs.stat(path.join(projectRoot, record))).rejects.toMatchObject({code: "ENOENT"});
+        expect(mocks.recordProjectDelete).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({relativePath: record, actor}));
+        expect(await fs.readFile(path.join(projectRoot, materialPath), "utf8")).toBe("原有基础人设");
+    });
     it("只有同一 ready 会话签发且未过期的报告可采用，事务保存分析结果与历史", async () => {
         const projectRoot = await createTestTmpRoot("outline-host", "detail-analysis-contract");
         roots.push(projectRoot);
@@ -53,11 +95,11 @@ describe("outline ready Project host", () => {
             status: "adopted", title: "总纲", parentId: null, chapterId: null, body: "故事"};
         const chapter: OutlineEntry = {...root, id: "ol-chapter", kind: "chapter", title: "第一章", parentId: root.id};
         const detail: OutlineEntry = {...chapter, id: "ol-detail", kind: "detail", status: "draft",
-            parentId: chapter.id, chapterId: chapter.id, title: "细纲"};
+            parentId: chapter.id, chapterId: chapter.id, title: "细纲", ...sceneDetail("主角出发")};
         const files = [root, chapter, detail].map((value) => ({
             value, path: `outline/entries/${value.kind}--${value.id}.md`, content: serializeEntryMarkdown(value),
         }));
-        const manifest = {...createEmptyManifest(), totalId: root.id, plans: [{id: "plan-a", title: "主方案", placements: [
+        const manifest = {...createEmptyManifest(), plans: [{id: "plan-a", title: "主方案", totalId: root.id, placements: [
             {entryId: root.id, parentId: null, position: 0}, {entryId: chapter.id, parentId: root.id, position: 1},
             {entryId: detail.id, parentId: chapter.id, position: 2},
         ]}], entries: files.map(({value, path, content}) => ({id: value.id, path, version: 0, contentHash: contentHash(content)}))};
@@ -68,7 +110,8 @@ describe("outline ready Project host", () => {
         mocks.requireReadyModuleHandle.mockImplementation((_ready, token: {name: string}) => token.name === "file-index" ? fileIndex : {});
         mocks.runReadyProjectOperation.mockImplementation(async (_ready, operation) =>
             operation(new AbortController().signal, () => undefined, async () => undefined));
-        const {analyzeReadyDetail, adoptReadyDetail, applyReadyLibraryAction, undoReadyPlanningFiles} = await import("./host");
+        const {analyzeReadyDetail, adoptReadyDetail, applyReadyLibraryAction, readReadyWriterChapterContext,
+            readReadyWriterChapterDirectory, undoReadyPlanningFiles} = await import("./host");
         const input = {planId: "plan-a", entryId: detail.id, expectedRevision: 0, expectedVersion: 0,
             expectedContentHash: contentHash(files[2]!.content)};
         const actor = {kind: "user" as const, userId: "local"};
@@ -102,6 +145,15 @@ describe("outline ready Project host", () => {
             relativePath: files[2]!.path, actor,
         }));
         await expect(adoptReadyDetail(ready, input, issued.report.reportId, true, [], actor)).rejects.toThrow(/没有当前会话/);
+        expect((await readReadyWriterChapterDirectory(ready, {planId: "plan-a"})).chapters).toMatchObject([
+            {entryId: chapter.id, writable: true, details: [{entryId: detail.id, status: "adopted"}]}]);
+        const chapterRequest = {planId: "plan-a", chapterEntryId: chapter.id};
+        const writerContext = await readReadyWriterChapterContext(ready, chapterRequest);
+        expect(writerContext).toMatchObject({planId: "plan-a", chapter: {entryId: chapter.id, body: chapter.body},
+            details: [{entryId: detail.id}]});
+        expect(writerContext).not.toHaveProperty("materials");
+        await expect(readReadyWriterChapterContext(ready, chapterRequest, ["lorebook/character/secret.md"]))
+            .rejects.toThrow(/正式/);
         const chapterBefore = saved.entries.find(({value}) => value.id === chapter.id)!;
         const changed = await applyReadyLibraryAction(ready, {kind: "edit-entry", planId: "plan-a", entryId: chapter.id,
             expectedVersion: chapterBefore.value.version, expectedContentHash: chapterBefore.contentHash,
@@ -109,6 +161,7 @@ describe("outline ready Project host", () => {
         const withdrawn = await readPlanningSnapshot({projectRoot});
         expect(withdrawn.entries.find(({value}) => value.id === detail.id)?.value).toMatchObject({status: "draft", version: 2});
         expect(withdrawn.entries.find(({value}) => value.id === detail.id)?.value.analysis).toBeUndefined();
+        await expect(readReadyWriterChapterContext(ready, chapterRequest)).rejects.toThrow(/不可写/);
         await expect(undoReadyPlanningFiles(ready, changed.transactionId, actor)).resolves.toMatchObject({kind: "undone"});
         const restored = await readPlanningSnapshot({projectRoot});
         expect(restored.entries.find(({value}) => value.id === detail.id)?.value.analysis?.reportId).toBe(issued.report.reportId);
@@ -161,7 +214,7 @@ describe("outline ready Project host", () => {
             schema: "nbook.outline-entry/v1", id: "ol-001", kind: "total", version: 0,
             status: "draft", title: "Total", parentId: null, chapterId: null, body: "entry\n",
         });
-        const next = serializeManifest({...initial, revision: 1, totalId: "ol-001", entries: [
+        const next = serializeManifest({...initial, revision: 1, entries: [
             {id: "ol-001", path: entry, version: 0, contentHash: contentHash(entryContent)},
         ]});
         const revalidate = vi.fn(async () => {
@@ -289,7 +342,7 @@ describe("outline ready Project host", () => {
             value, path: `outline/entries/${value.kind}--${value.id}.md`, content: serializeEntryMarkdown(value),
         }));
         const manifestPath = "outline/manifest.yaml";
-        const base = {...createEmptyManifest(), totalId: root.id, plans: [{id: "plan-a", title: "主方案", placements: [
+        const base = {...createEmptyManifest(), plans: [{id: "plan-a", title: "主方案", totalId: root.id, placements: [
             {entryId: root.id, parentId: null, position: 0}, {entryId: chapter.id, parentId: root.id, position: 1},
         ]}], entries: entryFiles.map(({value, path, content}) => ({id: value.id, path, version: 0, contentHash: contentHash(content)}))};
         const original = serializeManifest(base);
@@ -469,8 +522,8 @@ describe("outline ready Project host", () => {
         const rootContent = serializeEntryMarkdown(root);
         const chapterContent = serializeEntryMarkdown(chapter);
         const foreshadowContent = serializeForeshadowingMarkdown(definition);
-        const manifest = {...createEmptyManifest(), totalId: root.id,
-            plans: [{id: "plan-main", title: "主方案", placements: [
+        const manifest = {...createEmptyManifest(),
+            plans: [{id: "plan-main", title: "主方案", totalId: root.id, placements: [
                 {entryId: root.id, parentId: null, position: 0}, {entryId: chapter.id, parentId: root.id, position: 1},
             ]}],
             entries: [{id: root.id, path: rootPath, version: root.version, contentHash: contentHash(rootContent)},
@@ -560,8 +613,8 @@ describe("ready Project 线路报告签发与固定", () => {
             title: "主线", type: "main", fixed: false, nodeIds: ["nd-root", "nd-chapter"]};
         const linePath = "outline/storylines/main--ln-main.yaml";
         const lineContent = serializeLineYaml(line);
-        const manifest = {...createEmptyManifest(), totalId: root.id,
-            plans: [{id: "plan-a", title: "主方案", placements: [{entryId: root.id, parentId: null, position: 0},
+        const manifest = {...createEmptyManifest(),
+            plans: [{id: "plan-a", title: "主方案", totalId: root.id, placements: [{entryId: root.id, parentId: null, position: 0},
                 {entryId: chapter.id, parentId: root.id, position: 1}]}],
             entries: entries.map(({id, path, version, content}) => ({id, path, version, contentHash: contentHash(content)})),
             graphs: [{id: graph.id, path: graphPath, version: 1, contentHash: contentHash(graphContent)}],
@@ -603,25 +656,13 @@ describe("ready Project 线路报告签发与固定", () => {
         expect(mocks.recordProjectWrite).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({relativePath: linePath, actor}));
         await expect(fixReadyLine(ready, input, issued.report.reportId,
             [{index: 0, decision: "resolved", reason: "重复提交"}], actor)).rejects.toThrow(/当前会话/);
-        const {applyReadyLineAction, inspectReadyLine, readReadyFixedLineNodes, readReadyWriterOutlineContext} = await import("./host");
+        const {applyReadyLineAction, inspectReadyLine, readReadyFixedLineNodes} = await import("./host");
         const fixedSnapshot = await readPlanningSnapshot({projectRoot});
         const fixedRequest = {lineId: line.id, expectedRevision: fixedSnapshot.manifest.revision,
             expectedVersion: saved.version, expectedContentHash: fixedSnapshot.lines[0]!.contentHash};
         expect((await inspectReadyLine(ready, line.id)).nodes.map(({status}) => status)).toEqual(["valid", "valid"]);
         expect((await readReadyFixedLineNodes(ready, fixedRequest)).nodes.map(({entryId}) => entryId))
             .toEqual([root.id, chapter.id]);
-        const writerContext = await readReadyWriterOutlineContext(ready, fixedRequest);
-        expect(writerContext).toMatchObject({lineId: line.id, planId: "plan-a",
-            nodes: [{entryId: root.id, body: root.body}, {entryId: chapter.id, body: chapter.body}]});
-        await fs.mkdir(path.join(projectRoot, "lorebook/character"), {recursive: true});
-        await fs.writeFile(path.join(projectRoot, "lorebook/character/hero.md"), "角色素材", "utf8");
-        const withMaterials = await readReadyWriterOutlineContext(ready, fixedRequest, ["lorebook/character/hero.md"]);
-        expect(withMaterials).toMatchObject({materials: [{path: "lorebook/character/hero.md",
-            content: "角色素材", sources: [{entryId: chapter.id, field: "materialRefs"}]}]});
-        await expect(readReadyWriterOutlineContext(ready, fixedRequest, ["lorebook/character/secret.md"]))
-            .rejects.toThrow(/正式/);
-        await expect(readReadyWriterOutlineContext(ready, {...fixedRequest, expectedVersion: 0}))
-            .rejects.toMatchObject({code: "CAS_CONFLICT"});
         await expect(readReadyFixedLineNodes(ready, {...fixedRequest, expectedVersion: 0}))
             .rejects.toMatchObject({code: "CAS_CONFLICT"});
         const reopen = {kind: "reopen-fixed-line" as const, lineId: line.id, expectedVersion: saved.version,

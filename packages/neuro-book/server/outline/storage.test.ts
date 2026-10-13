@@ -5,6 +5,7 @@ import {createTestTmpRoot} from "@notnotype/neuro-book-test-support/tmp";
 import {publishPlanningFiles, readPlanningSnapshot} from "./index";
 import {createOutlineRepository} from "./repository";
 import {readValidFixedLineNodes} from "./line-analysis";
+import {getLibraryTrees, prepareLibraryAction} from "./library";
 import {
     contentHash,
     createEmptyManifest,
@@ -337,8 +338,8 @@ describe("planning candidate validation and object deletion", () => {
             const content = serializeEntryMarkdown({...item, schema: "nbook.outline-entry/v1" as const, version: 0, status: "draft" as const, body: ""});
             return {id: item.id, path: "outline/entries/" + item.id + "--" + item.id + ".md", content};
         });
-        const manifest = serializeManifest({...initial, revision: 1, totalId: "ol-total" as const,
-            plans: [{id: "plan-a", title: "方案", placements: [
+        const manifest = serializeManifest({...initial, revision: 1,
+            plans: [{id: "plan-a", title: "方案", totalId: "ol-total" as const, placements: [
                 {entryId: "ol-total" as const, parentId: null, position: 0},
                 {entryId: "ol-chapter" as const, parentId: "ol-total" as const, position: 1},
                 {entryId: "ol-detail" as const, parentId: "ol-total" as const, position: 2},
@@ -362,7 +363,7 @@ describe("planning candidate validation and object deletion", () => {
             mutations: [
                 {relativePath: objectPath, content: "not front matter"},
                 {relativePath: "outline/manifest.yaml", content: serializeManifest({
-                    ...manifest, revision: 1, totalId: "ol-001",
+                    ...manifest, revision: 1,
                     entries: [{id: "ol-001", path: objectPath, version: 0, contentHash: contentHash("not front matter")}],
                 })},
             ],
@@ -472,7 +473,7 @@ describe("outline repository", () => {
     it("从规范文件重建索引且删除预览不隐式删除共享对象", async () => {
         const projectRoot = await createRoot();
         const repository = createOutlineRepository(options(projectRoot));
-        await repository.ensureLayout("schema: nbook.outline/v2\nrevision: 1\n");
+        await repository.ensureLayout("schema: nbook.outline/v3\nrevision: 1\n");
         await repository.publish([
             {relativePath: "outline/entries/total--ol-001.md", content: "id: ol-001\n"},
             {relativePath: "outline/graphs/plan--gr-001.yaml", content: "id: gr-001\n"},
@@ -555,8 +556,7 @@ describe("outline repository", () => {
         const manifest = {
             ...createEmptyManifest(),
             revision: 1,
-            totalId: entry.id,
-            plans: [{id: "plan-a", title: "方案", placements: [{entryId: entry.id, parentId: null, position: 0}]}],
+            plans: [{id: "plan-a", title: "方案", totalId: entry.id, placements: [{entryId: entry.id, parentId: null, position: 0}]}],
             entries: [{id: entry.id, path: entryPath, version: entry.version, contentHash: contentHash(entryContent)}],
             foreshadowing: [{id: foreshadowing.id, path: foreshadowingPath, version: foreshadowing.version, contentHash: contentHash(foreshadowingContent)}],
             graphs: [{id: graph.id, path: graphPath, version: graph.version, contentHash: contentHash(graphContent)}],
@@ -570,7 +570,7 @@ describe("outline repository", () => {
             {relativePath: "outline/manifest.yaml", content: serializeManifest(manifest)},
         ]);
         await expect(readPlanningSnapshot(options(projectRoot))).resolves.toMatchObject({
-            manifest: {schema: "nbook.outline/v2", revision: 1, totalId: entry.id},
+            manifest: {schema: "nbook.outline/v3", revision: 1, plans: [{id: "plan-a", totalId: entry.id}]},
             entries: [{value: {id: entry.id, materialRefs: entry.materialRefs, writingGuidance: entry.writingGuidance,
                 references: entry.references, targetWords: entry.targetWords}, markers: []}],
             foreshadowing: [{value: {id: foreshadowing.id}}],
@@ -607,7 +607,7 @@ describe("outline repository", () => {
         ]);
         for (let i = 0; i < 2; i++) {
             const snapshot = await readPlanningSnapshot(options(projectRoot));
-            expect(snapshot.manifest).toMatchObject({schema: "nbook.outline/v2", graphs: [], lines: []});
+            expect(snapshot.manifest).toMatchObject({schema: "nbook.outline/v3", graphs: [], lines: []});
             expect(snapshot.graphs).toEqual([]);
             expect(snapshot.lines).toEqual([]);
             expect(() => readValidFixedLineNodes(snapshot, "ln-old-fork")).toThrow(/不存在/);
@@ -615,6 +615,55 @@ describe("outline repository", () => {
         expect(await fs.readFile(path.join(projectRoot, linePath), "utf8")).toBe(lineContent);
         expect(await fs.readFile(path.join(projectRoot, "outline/manifest.yaml"), "utf8")).toBe(manifestContent);
     });
+describe("旧版全局总纲 manifest 的读取归一", () => {
+    it("v2 manifest 的单个全局总纲读取后由所有方案共用，用户文件字节不被改写，下一次写入才升级为 v3", async () => {
+        const projectRoot = await createRoot();
+        const total: OutlineEntry = {schema: "nbook.outline-entry/v2", id: "ol-total", kind: "total", version: 0,
+            status: "draft", title: "全局总纲", parentId: null, chapterId: null, body: "旧版唯一总纲"};
+        const chapter: OutlineEntry = {...total, id: "ol-chapter", kind: "chapter", title: "章节", parentId: total.id, body: "章节正文"};
+        const entryFiles = [total, chapter].map((value) => ({value, path: `outline/entries/${value.id}.md`, content: serializeEntryMarkdown(value)}));
+        const planPlacements = (withChapter: boolean) => [
+            {entryId: total.id, parentId: null, position: 0},
+            ...(withChapter ? [{entryId: chapter.id, parentId: total.id, position: 1}] : []),
+        ];
+        // 旧版 v2 以字节写出：顶层 totalId、方案条目没有 totalId。
+        const manifestContent = serializeYaml({schema: "nbook.outline/v2", revision: 2, totalId: total.id,
+            plans: [
+                {id: "plan-a", title: "甲", placements: planPlacements(true)},
+                {id: "plan-b", title: "乙", placements: planPlacements(true)},
+                {id: "plan-c", title: "丙", placements: planPlacements(false)},
+            ],
+            entries: entryFiles.map(({value, path: filePath, content}) => ({id: value.id, path: filePath,
+                version: value.version, contentHash: contentHash(content)})),
+            foreshadowing: [], graphs: [], lines: []});
+        await publishOutlineFiles(options(projectRoot), [
+            ...entryFiles.map(({path: filePath, content}) => ({relativePath: filePath, content})),
+            {relativePath: "outline/manifest.yaml", content: manifestContent},
+        ]);
+        const snapshot = await readPlanningSnapshot(options(projectRoot));
+        expect(snapshot.manifest.schema).toBe("nbook.outline/v3");
+        expect(snapshot.manifest.plans.map(({id, totalId}) => [id, totalId])).toEqual([
+            ["plan-a", total.id], ["plan-b", total.id], ["plan-c", total.id]]);
+        expect(getLibraryTrees(snapshot).map((tree) => tree.root.entry.id)).toEqual([total.id, total.id, total.id]);
+        // 读取（含重复读取）不写盘：manifest 与条目文件都保持旧版字节。
+        await readPlanningSnapshot(options(projectRoot));
+        expect(await fs.readFile(path.join(projectRoot, "outline/manifest.yaml"), "utf8")).toBe(manifestContent);
+        for (const file of entryFiles) expect(await fs.readFile(path.join(projectRoot, file.path), "utf8")).toBe(file.content);
+        // 共用的旧总纲在归一后受共用保护：不能原地编辑，只能经写时分叉。
+        expect(() => prepareLibraryAction(snapshot, {kind: "edit-entry", planId: "plan-a", entryId: total.id, title: "全局总纲",
+            body: "改", expectedVersion: 0, expectedContentHash: contentHash(entryFiles[0]!.content)})).toThrow(/共用/);
+        // 用户第一次经领域操作写入时才升级为 v3，且不再带顶层 totalId。
+        const renamed = prepareLibraryAction(snapshot, {kind: "rename-plan", planId: "plan-c", title: "丙新"});
+        await publishPlanningFiles(options(projectRoot), renamed.publish);
+        const upgraded = await fs.readFile(path.join(projectRoot, "outline/manifest.yaml"), "utf8");
+        expect(upgraded).toContain("schema: nbook.outline/v3");
+        expect(upgraded).not.toMatch(/^totalId:/mu);
+        const reread = await readPlanningSnapshot(options(projectRoot));
+        expect(reread.manifest.plans.map(({id, title, totalId}) => [id, title, totalId])).toEqual([
+            ["plan-a", "甲", total.id], ["plan-b", "乙", total.id], ["plan-c", "丙新", total.id]]);
+    });
+});
+
 describe("线路方案身份的规范快照校验", () => {
     it("从 YAML 恢复两个方案的线路图与主线，拒绝缺失方案与跨方案节点且保留原文件", async () => {
         const projectRoot = await createRoot();
@@ -635,10 +684,10 @@ describe("线路方案身份的规范快照校验", () => {
             title: "甲主线", type: "main", fixed: false, nodeIds: ["nd-a"]};
         const lineB: OutlineLine = {...lineA, id: "ln-b", planId: "plan-b", nodeIds: ["nd-b"]};
         const lineFiles = [lineA, lineB].map((line) => ({path: `outline/storylines/${line.id}.yaml`, content: serializeLineYaml(line), value: line}));
-        const manifest: OutlineManifest = {...createEmptyManifest(), revision: 1, totalId: total.id,
+        const manifest: OutlineManifest = {...createEmptyManifest(), revision: 1,
             plans: [
-                {id: "plan-a", title: "甲", placements: [{entryId: total.id, parentId: null, position: 0}, {entryId: a.id, parentId: total.id, position: 1}]},
-                {id: "plan-b", title: "乙", placements: [{entryId: total.id, parentId: null, position: 0}, {entryId: b.id, parentId: total.id, position: 1}]},
+                {id: "plan-a", title: "甲", totalId: total.id, placements: [{entryId: total.id, parentId: null, position: 0}, {entryId: a.id, parentId: total.id, position: 1}]},
+                {id: "plan-b", title: "乙", totalId: total.id, placements: [{entryId: total.id, parentId: null, position: 0}, {entryId: b.id, parentId: total.id, position: 1}]},
             ],
             entries: entryFiles.map(({path, content, value}) => ({id: value.id, path, version: value.version, contentHash: contentHash(content)})),
             graphs: graphFiles.map(({path, content, value}) => ({id: value.id, path, version: value.version, contentHash: contentHash(content)})),

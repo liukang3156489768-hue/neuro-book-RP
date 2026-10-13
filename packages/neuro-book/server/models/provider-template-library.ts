@@ -66,6 +66,7 @@ function buildTemplates(): ProviderTemplateLibraryDto {
     templates.push({
         id: "custom",
         name: "Custom Provider",
+        description: "空白连接模板：手动填写 API Base、协议和模型清单。",
         baseUrl: "",
         defaultModelApi: null,
         models: [],

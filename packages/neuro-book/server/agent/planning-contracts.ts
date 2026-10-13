@@ -51,7 +51,7 @@ export type PlanningConflictReport = Readonly<{
 export type ForeshadowingSuggestion = Readonly<{
     suggestionId: string;
     foreshadowingId?: string;
-    action: "create" | "strengthen" | "resolve" | "repair";
+    action: "create" | "plant" | "strengthen" | "resolve" | "repair";
     sourceEntryIds: readonly string[];
     rationale: string;
     confidence?: number;

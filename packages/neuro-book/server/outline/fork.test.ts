@@ -28,8 +28,9 @@ describe("shared entry write-time fork", () => {
             status: "adopted", title: "Chapter", parentId: "ol-total", chapterId: null, body: "Chapter\n",
             materialRefs: ["lorebook/人物/阿青.md"], targetWords: 1200});
         const manifest: OutlineManifest = {
-            ...createEmptyManifest(), revision: 1, totalId: "ol-total",
-            plans: ["a", "b"].map((id) => ({id, title: id, placements: [
+            ...createEmptyManifest(), revision: 1,
+            // 两个方案手动共用同一总纲，章节因此是跨方案共享条目。
+            plans: ["a", "b"].map((id) => ({id, title: id, totalId: "ol-total" as const, placements: [
                 {entryId: "ol-total" as const, parentId: null, position: 0},
                 {entryId: "ol-chapter" as const, parentId: "ol-total" as const, position: 1},
             ]})),
@@ -83,8 +84,8 @@ describe("shared entry write-time fork", () => {
             {id: "ol-total", path: "outline/entries/total--ol-total.md", content: total},
             {id: "ol-chapter", path: "outline/entries/chapter--ol-chapter.md", content: chapter},
         ];
-        const manifest: OutlineManifest = {...createEmptyManifest(), revision: 1, totalId: "ol-total",
-            plans: ["a", "b"].map((id) => ({id, title: id, placements: [
+        const manifest: OutlineManifest = {...createEmptyManifest(), revision: 1,
+            plans: ["a", "b"].map((id) => ({id, title: id, totalId: "ol-total" as const, placements: [
                 {entryId: "ol-total", parentId: null, position: 0},
                 {entryId: "ol-chapter", parentId: "ol-total", position: 1},
             ]})),
@@ -116,6 +117,46 @@ describe("shared entry write-time fork", () => {
             {id: nodeId, entryId: null, column: 0, row: 0}]);
         expect(snapshot.graphs.find(({value}) => value.planId === "a")?.value.nodes).toMatchObject([{entryId: "ol-chapter"}]);
     });
+    it("共用总纲的写时分叉只替换目标方案的根，直属子级随根迁移，源总纲不变", async () => {
+        const projectRoot = await createTestTmpRoot("outline-fork", "shared-total");
+        roots.push(projectRoot);
+        const options = {projectRoot};
+        await createOutlineRepository(options).ensureLayout(serializeManifest(createEmptyManifest()));
+        const files = [
+            {id: "ol-total", kind: "total" as const, parentId: null, title: "总纲", body: "共用主题"},
+            {id: "ol-volume", kind: "volume" as const, parentId: "ol-total", title: "卷一", body: ""},
+        ].map((value) => ({id: value.id, path: "outline/entries/" + value.id + "--" + value.id + ".md", content: serializeEntryMarkdown({
+            ...value, schema: "nbook.outline-entry/v2", version: 0, status: "draft" as const, chapterId: null,
+        })}));
+        const manifest: OutlineManifest = {...createEmptyManifest(), revision: 1,
+            plans: ["a", "b"].map((id) => ({id, title: id, totalId: "ol-total" as const, placements: [
+                {entryId: "ol-total" as const, parentId: null, position: 0},
+                {entryId: "ol-volume" as const, parentId: "ol-total" as const, position: 1},
+            ]})),
+            entries: files.map((file) => ({id: file.id, path: file.path, version: 0, contentHash: contentHash(file.content)})),
+        };
+        await publishPlanningFiles(options, {expectedManifestRevision: 0, mutations: [
+            ...files.map((file) => ({relativePath: file.path, content: file.content})),
+            {relativePath: "outline/manifest.yaml", content: serializeManifest(manifest)},
+        ]});
+        await expect(preparePlanningFork(options, {planId: "a", sourceId: "ol-total", title: "总纲", body: "新主题"}))
+            .rejects.toThrow(/不同的名称/);
+        const fork = await preparePlanningFork(options, {planId: "a", sourceId: "ol-total", title: "甲的总纲", body: "新主题"});
+        await publishPlanningFiles(options, fork.publish);
+        const snapshot = await readPlanningSnapshot(options);
+        const [planA, planB] = snapshot.manifest.plans;
+        expect(planA).toMatchObject({totalId: fork.id});
+        expect(planA?.placements.map(({entryId, parentId}) => [entryId, parentId])).toEqual([[fork.id, null], ["ol-volume", fork.id]]);
+        expect(planB).toMatchObject({totalId: "ol-total"});
+        expect(planB?.placements.map(({entryId, parentId}) => [entryId, parentId])).toEqual([["ol-total", null], ["ol-volume", "ol-total"]]);
+        expect(snapshot.entries.find(({value}) => value.id === fork.id)?.value).toMatchObject({kind: "total", title: "甲的总纲", body: "新主题", status: "draft", version: 0});
+        expect(await fs.readFile(path.join(projectRoot, files[0]!.path), "utf8")).toBe(files[0]!.content);
+        // 分叉后两个方案各用各的总纲，不再有共用关系可分叉。
+        for (const planId of ["a", "b"]) {
+            await expect(preparePlanningFork(options, {planId, sourceId: planId === "a" ? fork.id : "ol-total", title: "再来一份", body: ""}))
+                .rejects.toThrow(/无需分叉/);
+        }
+    });
     it("forking an analyzed detail drops the old report without editing the source", async () => {
         const projectRoot = await createTestTmpRoot("outline-fork", "outline-detail-report");
         roots.push(projectRoot);
@@ -132,8 +173,8 @@ describe("shared entry write-time fork", () => {
                 contextHash: "sha256:" + "2".repeat(64), summary: "已审阅", deviations: [], conflicts: [], resolutions: [],
             }} : {}),
         })}));
-        const manifest: OutlineManifest = {...createEmptyManifest(), revision: 1, totalId: "ol-total",
-            plans: ["a", "b"].map((id) => ({id, title: id, placements: [
+        const manifest: OutlineManifest = {...createEmptyManifest(), revision: 1,
+            plans: ["a", "b"].map((id) => ({id, title: id, totalId: "ol-total" as const, placements: [
                 {entryId: "ol-total" as const, parentId: null, position: 0},
                 {entryId: "ol-chapter" as const, parentId: "ol-total" as const, position: 1},
                 {entryId: "ol-detail" as const, parentId: "ol-chapter" as const, position: 2},

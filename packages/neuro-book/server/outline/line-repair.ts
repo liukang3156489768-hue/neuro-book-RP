@@ -28,7 +28,7 @@ export function prepareMissingEntryRepair(snapshot: PlanningSnapshot, input: Mis
         throw new OutlineLineError("丢失条目的引用已变化，请重新预览", "CAS_CONFLICT");
     }
     if (input.confirmRepair !== true) throw new OutlineLineError("移除丢失条目引用需要明确确认");
-    if (manifest.totalId === target.id || snapshot.entries.some(({value}) =>
+    if (manifest.plans.some(({totalId}) => totalId === target.id) || snapshot.entries.some(({value}) =>
         value.parentId === target.id || value.chapterId === target.id)
         || manifest.plans.some(({placements}) => placements.some(({parentId}) => parentId === target.id))) {
         throw new OutlineLineError("丢失条目仍有下级依赖，请先恢复原文件再调整层级");

@@ -73,8 +73,9 @@ describe("Project 伏笔标记修复真实 H3 HTTP 合同", () => {
             current = await snapshot();
             return await response.json() as {entryId?: string; planId?: string};
         };
-        const totalId = (await applyLibrary({kind: "create-total", title: "总纲", body: "作品"})).entryId!;
-        const planId = (await applyLibrary({kind: "create-plan", title: "主方案"})).planId!;
+        const created = await applyLibrary({kind: "create-plan", title: "主方案"});
+        const planId = created.planId!;
+        const totalId = created.entryId!;
         const chapterId = (await applyLibrary({kind: "create-entry", planId, parentId: totalId,
             entryKind: "chapter", title: "第一章", body: "初稿"})).entryId!;
         const chapterBeforeAdopt = current.entries.find(({value}) => value.id === chapterId)!;

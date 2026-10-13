@@ -1,4 +1,5 @@
 import {toJSONSchema, z} from "zod";
+import {MaterialExtractionSourceSchema, MaterialOriginSchema, type MaterialOrigin} from "nbook/shared/dto/inspiration-material.dto";
 
 export const WORKSPACE_CONTENT_STATUSES = ["draft", "pending", "active", "archived"] as const;
 export const WORKSPACE_CONTENT_TYPES = ["world", "character", "location", "faction", "item", "event", "system", "instruction", "rule", "note", "species", "creature", "organization", "volume", "chapter"] as const;
@@ -58,7 +59,22 @@ export const WorkspaceContentFrontmatterSchema = z.looseObject({
     retrieval: WorkspaceRetrievalSchema,
     governance: WorkspaceGovernanceSchema,
     ext: FreeObjectSchema,
+    // 增量扩展字段：缺失即用户设计，旧文件不迁移，默认值生成器也不写入它们。
+    origin: MaterialOriginSchema.optional().describe("内容来源：design 为用户设计（缺失时的默认），extract 为作品素材提取。"),
+    extraction: MaterialExtractionSourceSchema.optional().describe("作品提取素材的来源文件、内容哈希与 P 段落引用；仅 origin 为 extract 时存在。"),
+}).superRefine((frontmatter, context) => {
+    if (frontmatter.origin === "extract" && !frontmatter.extraction) {
+        context.addIssue({code: "custom", path: ["extraction"], message: "origin 为 extract 时必须提供 extraction（来源文件、哈希与 P 引用）"});
+    }
+    if (frontmatter.origin !== "extract" && frontmatter.extraction) {
+        context.addIssue({code: "custom", path: ["extraction"], message: "extraction 只能出现在 origin 为 extract 的内容节点上"});
+    }
 }).describe("标准内容节点 frontmatter。");
+
+/** 读取内容节点来源；缺失或无法识别的值都按用户设计处理，非法值由 frontmatter schema 校验单独报告。 */
+export function readWorkspaceContentOrigin(frontmatter: Record<string, unknown>): MaterialOrigin {
+    return frontmatter.origin === "extract" ? "extract" : "design";
+}
 
 /**
  * 返回指定内容节点类型对应的 Zod schema。

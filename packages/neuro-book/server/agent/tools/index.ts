@@ -1,4 +1,5 @@
 import {createFileTools} from "nbook/server/agent/tools/file-tools";
+import {createPlanningMaterialTools} from "nbook/server/agent/tools/planning-material-tools";
 import {createPlanningTools, createSpecialistPlanningTools} from "nbook/server/agent/tools/planning-tools";
 import {createPlanningDelegationTool, createPlanningSpecialistTool} from "nbook/server/agent/tools/planning-specialist-tool";
 import {createLorebookFileTools} from "nbook/server/agent/tools/lorebook-file-tools";
@@ -9,6 +10,8 @@ import {createTaskTools} from "nbook/server/agent/tools/task-tools";
 import {createWebTools} from "nbook/server/agent/tools/web-tools";
 import {createWorldEngineTools} from "nbook/server/agent/tools/world-engine-tools";
 import {createWorkflowTools} from "nbook/server/agent/tools/workflow-tools";
+import {createExtractionTools} from "nbook/server/agent/tools/extraction-tools";
+import {createWritingAssistantTools, createWritingLeadTools} from "nbook/server/agent/tools/writing-tools";
 import {createJobTools} from "nbook/server/agent/tools/job-tools";
 import {agentCollaborationTools} from "nbook/server/agent/tools/agent-collaboration-tools";
 import {controlTools} from "nbook/server/agent/tools/control-tools";
@@ -21,6 +24,7 @@ export {controlTools, createReportResultTool, ReportResultSchema} from "nbook/se
 
 function buildAgentTools() {
     const planningTools = definitionsByKey(createPlanningTools());
+    const planningMaterialTools = definitionsByKey(createPlanningMaterialTools());
     const specialistPlanningTools = definitionsByKey(createSpecialistPlanningTools());
     const lorebookFileTools = definitionsByKey(createLorebookFileTools());
     const fileTools = definitionsByKey(createFileTools());
@@ -33,6 +37,9 @@ function buildAgentTools() {
     const sqlTool = defineAgentToolFromRuntime(createSqlTool());
     const workflowTools = createWorkflowTools();
     const jobTools = createJobTools();
+    const writingLeadTools = createWritingLeadTools();
+    const writingAssistantTools = createWritingAssistantTools();
+    const extractionTools = createExtractionTools();
     return {
         read: requireDefinition(fileTools, "read"),
         write: requireDefinition(fileTools, "write"),
@@ -48,6 +55,8 @@ function buildAgentTools() {
         getStoryChapter: requireDefinition(plotTools, "get_story_chapter"),
         getChapterWriterBrief: requireDefinition(plotTools, "get_chapter_writer_brief"),
         getPlanningContext: requireDefinition(planningTools, "get_planning_context"),
+        listPlanningMaterials: requireDefinition(planningMaterialTools, "list_planning_materials"),
+        readPlanningMaterial: requireDefinition(planningMaterialTools, "read_planning_material"),
         getForeshadowingContext: requireDefinition(planningTools, "get_foreshadowing_context"),
         suggestForeshadowingMarker: requireDefinition(planningTools, "suggest_foreshadowing_marker"),
         previewPlanningChange: requireDefinition(planningTools, "preview_planning_change"),
@@ -67,6 +76,21 @@ function buildAgentTools() {
         saveStoryPromise: requireDefinition(plotTools, "save_story_promise"),
         savePromiseBeat: requireDefinition(plotTools, "save_promise_beat"),
         saveStoryDecision: requireDefinition(plotTools, "save_story_decision"),
+        getWritingStatus: writingLeadTools.getWritingStatus,
+        startWriting: writingLeadTools.startWriting,
+        continueWriting: writingLeadTools.continueWriting,
+        stopWriting: writingLeadTools.stopWriting,
+        answerScenePlan: writingLeadTools.answerScenePlan,
+        startRewrite: writingLeadTools.startRewrite,
+        answerRewrite: writingLeadTools.answerRewrite,
+        readChapterProse: writingLeadTools.readChapterProse,
+        editChapterProse: writingLeadTools.editChapterProse,
+        listWritingMaterials: writingAssistantTools.listWritingMaterials,
+        readWritingMaterial: writingAssistantTools.readWritingMaterial,
+        startInspirationExtraction: extractionTools.startExtraction,
+        getInspirationExtractionProgress: extractionTools.getProgress,
+        confirmInspirationMaterialWrite: extractionTools.confirmMaterialWrite,
+        getInspirationExtractionFailures: extractionTools.getFailures,
         executeSql: sqlTool,
         runWorkflow: workflowTools.runWorkflow,
         listWorkflows: workflowTools.listWorkflows,

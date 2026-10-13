@@ -103,11 +103,11 @@ describe("规划通用发布权限", () => {
             contentHash: "sha256:" + "0".repeat(64)};
         const chapter = {id: "ol-chapter" as const, path: "outline/entries/chapter--ol-chapter.md", version: 0,
             contentHash: "sha256:" + "1".repeat(64)};
-        const plan = {id: "plan-a", title: "A", placements: [
+        const plan = {id: "plan-a", title: "A", totalId: total.id, placements: [
             {entryId: total.id, parentId: null, position: 0},
             {entryId: chapter.id, parentId: total.id, position: 1},
         ]};
-        const current = {...base, totalId: total.id, entries: [total, chapter], plans: [plan, {...plan, id: "plan-b"}]};
+        const current = {...base, entries: [total, chapter], plans: [plan, {...plan, id: "plan-b"}]};
         const draft = serializeEntryMarkdown({schema: "nbook.outline-entry/v1", id: chapter.id, kind: "chapter", status: "draft",
             version: 1, title: "修改共享章节", parentId: total.id, chapterId: null, body: "新内容"});
         expect(() => assertNonDestructivePlanningEdit(snapshot(current), {expectedManifestRevision: 0,
@@ -135,15 +135,16 @@ describe("规划通用发布权限", () => {
             id: entryId, path: "outline/entries/" + entryId + ".md", version: 0,
             contentHash: "sha256:" + "0".repeat(64),
         }));
-        const current = {...base, totalId: "ol-root" as const, entries, plans: [{id: "plan-a", title: "A", placements}]};
+        const current = {...base, entries, plans: [{id: "plan-a", title: "A", totalId: "ol-root" as const, placements}]};
         expect(() => assertNonDestructivePlanningEdit(snapshot(current), edit({
             ...current, revision: 1, plans: [{...current.plans[0]!, placements: [placements[0]!]}],
         }))).toThrow(/移除方案关系/);
+        // 原始文件发布不能改写方案的总纲指向：关联、分叉与替换都必须走领域操作。
         expect(() => assertNonDestructivePlanningEdit(snapshot(current), edit({
-            ...current, revision: 1, totalId: null,
-        }))).toThrow(/移除或替换总纲/);
+            ...current, revision: 1, plans: [{...current.plans[0]!, totalId: "ol-child" as const}],
+        }))).toThrow(/总纲的关联、分叉与替换/);
         expect(() => assertNonDestructivePlanningEdit(snapshot(base), edit({
-            ...base, revision: 1, plans: [{id: "plan-a", title: "A", placements: []}],
+            ...base, revision: 1, entries, plans: [{id: "plan-a", title: "A", totalId: "ol-root" as const, placements}],
         }))).toThrow(/方案链/);
     });
 });

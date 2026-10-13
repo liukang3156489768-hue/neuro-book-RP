@@ -16,6 +16,8 @@ import NovelIdeSettingsDialog from "nbook/app/components/novel-ide/NovelIdeSetti
 import WorldEngineWorkbenchDialog from "nbook/app/components/novel-ide/world-engine/WorldEngineWorkbenchDialog.vue";
 import InspirationWorkbenchDialog from "nbook/app/components/novel-ide/inspiration/InspirationWorkbenchDialog.vue";
 import OutlineWorkbenchDialog from "nbook/app/components/novel-ide/outline/OutlineWorkbenchDialog.vue";
+import CharacterWorkspaceHost from "nbook/app/components/novel-ide/character/CharacterWorkspaceHost.vue";
+import WritingCentrePanel from "nbook/app/components/novel-ide/writing/WritingCentrePanel.vue";
 import NovelPlotPanel from "nbook/app/components/novel-ide/plot/NovelPlotPanel.vue";
 import NovelPromptBar from "nbook/app/components/novel-ide/NovelPromptBar.vue";
 import type {AgentSessionModelDraft} from "nbook/app/components/novel-ide/agent/agent-session-model-controls";
@@ -102,6 +104,7 @@ import {useInlineEditorAgentController} from "nbook/app/composables/useInlineEdi
 import {useWorkbenchChromeRegistration} from "nbook/app/composables/useWorkbenchChrome";
 import type {AgentTriggerMenuContext, AgentTriggerMenuItem, AgentTriggerMenuState, MarkdownCommandKind} from "nbook/app/components/novel-ide/agent/trigger-menu";
 import {useNovelIdeStore, type WorkspaceFileNode} from "nbook/app/stores/novel-ide";
+import {useWritingWorkspaceStore} from "nbook/app/stores/writing-workspace";
 import type {WorkspaceFileChangeEventDto, WorkspaceFileStreamEventDto} from "nbook/shared/dto/workspace-file-events.dto";
 import type {AgentSessionSummaryDto, AgentSkillCatalogItemDto} from "nbook/shared/dto/agent-session.dto";
 import {agentSessionScopeKey} from "nbook/app/utils/agent-session-scope-key";
@@ -152,6 +155,8 @@ const historyInboxRefreshKey = ref(0);
 const worldEngineWorkbenchOpen = ref(false);
 const inspirationWorkbenchOpen = ref(false);
 const outlineWorkbenchOpen = ref(false);
+const characterWorkbenchOpen = ref(false);
+const characterWorkbenchRef = ref<InstanceType<typeof CharacterWorkspaceHost> | null>(null);
 /** 剧本工作台复用剧情面板的数据编排；宿主按需挂载，避免活动栏点击时组件尚未存在。 */
 const plotWorkbenchHostMounted = ref(false);
 const worldEngineWorkbenchHasUnsavedDrafts = ref(false);
@@ -184,6 +189,7 @@ const IDE_PAPER_TRANSITION_SELECTORS = [
 ] as const;
 
 const novelIdeStore = useNovelIdeStore();
+const writingStore = useWritingWorkspaceStore();
 const route = useRoute();
 const router = useRouter();
 const {
@@ -254,6 +260,30 @@ const projectSurfaceActive = computed(() => workspaceBootstrapped.value && (
         && projectSession.state.value.ready.projectRoot === currentProjectRoot.value,
     ))
 ));
+
+function leaveCharacterThen(action: () => void): void {
+    if (!characterWorkbenchOpen.value) {
+        action();
+        return;
+    }
+    const host = characterWorkbenchRef.value;
+    if (!host) {
+        characterWorkbenchOpen.value = false;
+        action();
+        return;
+    }
+    host.requestLeave(() => {
+        characterWorkbenchOpen.value = false;
+        action();
+    });
+}
+
+function openCharacterWorkbench(): void {
+    if (!projectSurfaceActive.value || isUserAssetsWorkspace.value) return;
+    inspirationWorkbenchOpen.value = false;
+    outlineWorkbenchOpen.value = false;
+    characterWorkbenchOpen.value = true;
+}
 const agentProjectReadyRevision = computed(() => projectSession.state.value.status === "ready"
     ? projectSession.state.value.ready.revision
     : null);
@@ -275,6 +305,7 @@ const workbenchLayoutSurface = computed<WorkbenchLayoutSurface>(() => {
 });
 watch(projectSurfaceActive, (active) => {
     if (!active) agentPanelOpen.value = false;
+    if (!active) characterWorkbenchOpen.value = false;
 });
 // Task 129：未选择 Project 时渲染项目选择界面。状态完全派生自 store，删除最后一本书 / URL 指向不存在的
 // Project / 裸 `/` 三条路径自动收敛到同一状态，不额外维护一份开关。
@@ -329,6 +360,7 @@ const editorGroups = computed<EditorGroupState[]>(() => editorWorkbench.groups.v
     })),
     busy: !workspaceDisplayReady.value || group.busy,
     diagnosis: group.diagnosis,
+    notice: group.notice,
 })));
 /** 逐组拿编排层的正式呈现（document/editorId/actions 不在 EditorGroupState 里）。 */
 function groupPresentation(groupId: string) {
@@ -372,8 +404,13 @@ const editorWorkbench = useEditorWorkbench({
             enableQuickTriggers: () => true,
             openFrontmatterProfile,
             addInlineAiReference,
+            canRewriteSelection: (target) => writingStore.overview?.chapters.some((chapter) => chapter.prose.some((prose) => prose.path === target.path)) ?? false,
+            rewriteSelection: (target, text) => {
+                if (!writingStore.requestRewrite(target.path, text)) notification.warning("这份正文还没有关联章节，或选区为空，无法交给主创改写。");
+            },
         },
     },
+    lockReasonOf: (path) => (writingStore.isProseLocked(path) ? "写作进行中：这一章的正文由主创改写，结束后自动恢复编辑并载入最新内容。" : null),
     chooseClose: (title) => choose(t("editorWorkbench.closeMessage", {title}), [
         {label: t("editorWorkbench.saveAndClose"), value: "save", tone: "primary"},
         {label: t("editorWorkbench.discard"), value: "discard", tone: "danger"},
@@ -515,7 +552,9 @@ async function handleSelectContainer(partId: ToolPartId, containerId: string): P
 /** 活动栏回传容器 id → 它此刻生效的 Part（容器可能已被搬到别的落位）。 */
 function handleOpenContainer(containerId: string): void {
     const partId = containerPart(containerId) ?? "left";
-    void handleSelectContainer(partId, containerId);
+    leaveCharacterThen(() => {
+        void handleSelectContainer(partId, containerId);
+    });
 }
 
 /** 某个容器此刻生效的 Part；未登记 / 不可落位返回 `null`。 */
@@ -584,7 +623,7 @@ async function toggleLeftSidebar(): Promise<void> {
  */
 const unavailableToolParts = computed<readonly ToolPartId[]>(() => {
     const parts = new Set<ToolPartId>();
-    if (projectPickerActive.value) {
+    if (projectPickerActive.value || characterWorkbenchOpen.value) {
         parts.add("left");
         parts.add("right");
     }
@@ -660,6 +699,31 @@ async function revealToolView(viewId: string): Promise<ViewPlacementsOutcome> {
     republishToolViewAfterReveal(outcome);
     return outcome;
 }
+
+/**
+ * 写作模块的跨视图请求：store 只记下"想揭示哪个视图 / 想在工作台里看哪条大纲"，
+ * 揭示与开对话框归页面，因为工作台位置与对话框开关都是页面持有的事实。
+ */
+watch(() => writingStore.revealRequest, (request) => {
+    if (request) void revealToolView(request.viewId);
+});
+watch(() => writingStore.outlineFocus, (focus) => {
+    if (focus) outlineWorkbenchOpen.value = true;
+});
+/** 活动文档换了，中间的大纲条目页就不再对应用户正在看的东西。 */
+watch(selectedFilePath, () => writingStore.dismissCentre());
+
+/** 中间页只盖在活动编辑组上，编辑器实例不卸载，关掉后原样可见。 */
+const writingCentreView = computed(() => {
+    if (!writingStore.centreOpen) return null;
+    const selection = writingStore.selection;
+    if (selection?.kind === "entry") {
+        const view = writingStore.entryView?.entryId === selection.entryId ? writingStore.entryView : null;
+        return {kind: "entry" as const, entryId: selection.entryId, entry: view?.entry ?? null, loading: view?.loading ?? true, error: view?.error ?? null};
+    }
+    const chapter = writingStore.selectedChapter;
+    return selection?.kind === "empty-prose" && chapter ? {kind: "empty-prose" as const, chapter} : null;
+});
 
 /**
  * 工具揭示端口（页面登记、按生命周期释放）：Agent 的 `client.ide.activePanel` 写入的唯一落点。
@@ -783,13 +847,14 @@ const workbenchShellRef = ref<InstanceType<typeof WorkbenchShell> | null>(null);
 /**
  * 叶的显隐都由页面事实驱动，走外壳暴露的 `setLeafVisible`：
  * - `titlebar` **两种宿主都显示**：浏览器没有 bridge 也要有可用标题栏（菜单按真实能力裁剪）；
- * - `left` / `right` 在书架（picker）态收起，主区整个让给书架视图——与接入前「图标条 + 书架」等价；
+ * - `left` / `right` 在书架（picker）态或角色工作台打开时收起，主区整个让给当前全宽工作区；
  *   用户显式隐藏（`hiddenSidebars`）同样移出布局，两者任一成立即隐藏。
  */
-watch([workbenchShellRef, projectPickerActive, leftSidebarHidden, rightSidebarHidden], ([shell, pickerActive, leftHidden, rightHidden]) => {
+watch([workbenchShellRef, projectPickerActive, characterWorkbenchOpen, leftSidebarHidden, rightSidebarHidden], ([shell, pickerActive, characterOpen, leftHidden, rightHidden]) => {
     if (!shell) return;
-    shell.setLeafVisible("left", !pickerActive && !leftHidden);
-    shell.setLeafVisible("right", !pickerActive && !rightHidden);
+    const hideSidebars = pickerActive || characterOpen;
+    shell.setLeafVisible("left", !hideSidebars && !leftHidden);
+    shell.setLeafVisible("right", !hideSidebars && !rightHidden);
 });
 
 /**
@@ -2487,6 +2552,7 @@ const openUserAssets = (): void => {
  */
 const releaseProjectSurface = async (): Promise<void> => {
     stopWorkspaceEvents();
+    characterWorkbenchOpen.value = false;
     worldEngineWorkbenchOpen.value = false;
     plotWorkbenchOpen.value = false;
     plotWorkbenchHostMounted.value = false;
@@ -3189,8 +3255,8 @@ onBeforeUnmount(() => {
 
         <div class="relative flex min-w-0 flex-1 flex-col overflow-hidden">
         <WorldEngineWorkbenchDialog v-if="projectSurfaceActive && !isUserAssetsWorkspace" v-model="worldEngineWorkbenchOpen" :project-root="currentProjectRoot" :project-title="displayNovelTitle" :surface="workbenchLayoutSurface" @has-unsaved-drafts-change="worldEngineWorkbenchHasUnsavedDrafts = $event" @saving-change="worldEngineWorkbenchSaving = $event" @open-workspace-path="void openWelcomeWorkspacePath($event)" />
-        <InspirationWorkbenchDialog v-if="projectSurfaceActive && !isUserAssetsWorkspace" v-model="inspirationWorkbenchOpen" :project-root="currentProjectRoot" />
-        <OutlineWorkbenchDialog v-if="projectSurfaceActive && !isUserAssetsWorkspace" v-model="outlineWorkbenchOpen" :project-root="currentProjectRoot" :project-title="displayNovelTitle" :surface="workbenchLayoutSurface" />
+        <InspirationWorkbenchDialog v-if="projectSurfaceActive && !isUserAssetsWorkspace" v-model="inspirationWorkbenchOpen" :project-root="currentProjectRoot" @open-outline-plan="inspirationWorkbenchOpen = false; outlineWorkbenchOpen = true" />
+        <OutlineWorkbenchDialog v-if="projectSurfaceActive && !isUserAssetsWorkspace" v-model="outlineWorkbenchOpen" :project-root="currentProjectRoot" :project-title="displayNovelTitle" :surface="workbenchLayoutSurface" :focus="writingStore.outlineFocus" />
 
         <!-- 工作台外壳骨架（#192 阶段 1 步骤 2）：四个叶挂的是外壳部件，业务组件暂不挂载（仍在仓库里）。
              left / right 叶已换成容器部件（步骤 5），editor 叶仍是演示占位块。
@@ -3247,15 +3313,17 @@ onBeforeUnmount(() => {
                     :user-assets-mode="isUserAssetsWorkspace"
                     :current-user="currentUser"
                     :inspiration-open="inspirationWorkbenchOpen"
+                    :characters-open="characterWorkbenchOpen"
                     :outline-open="outlineWorkbenchOpen"
-                    @open-home="void openProjectPicker()"
+                    @open-home="leaveCharacterThen(() => { void openProjectPicker() })"
                     @open-container="handleOpenContainer"
-                    @open-world-engine="openWorldEngineWorkbench"
-                    @open-inspiration="inspirationWorkbenchOpen = true"
-                    @open-outline-workbench="outlineWorkbenchOpen = true"
-                    @open-plot-workbench="void openPlotWorkbench()"
-                    @open-trace-viewer="traceViewerOpen = true"
-                    @open-history-inbox="historyInboxOpen = true"
+                    @open-world-engine="leaveCharacterThen(openWorldEngineWorkbench)"
+                    @open-inspiration="leaveCharacterThen(() => { inspirationWorkbenchOpen = true })"
+                    @open-characters="openCharacterWorkbench"
+                    @open-outline-workbench="leaveCharacterThen(() => { outlineWorkbenchOpen = true })"
+                    @open-plot-workbench="leaveCharacterThen(() => { void openPlotWorkbench() })"
+                    @open-trace-viewer="leaveCharacterThen(() => { traceViewerOpen = true })"
+                    @open-history-inbox="leaveCharacterThen(() => { historyInboxOpen = true })"
                     @open-settings="settingsDialogOpen = true"
                     @open-profile="accountProfileOpen = true"
                     @open-admin="void openAdmin()"
@@ -3287,6 +3355,12 @@ onBeforeUnmount(() => {
             <template #editor>
                 <!-- 未选择 Project：书架视图（原整页 picker）落在主区；left / right 叶由页面收起，主区整个归它。 -->
                 <ProjectPickerScreen v-if="projectPickerActive" @open="void openProjectFromPicker($event)" @open-user-assets="openUserAssets" />
+                <CharacterWorkspaceHost
+                    v-else-if="characterWorkbenchOpen && projectSurfaceActive && !isUserAssetsWorkspace"
+                    ref="characterWorkbenchRef"
+                    :project-root="currentProjectRoot"
+                    @open-file="(path) => void openWelcomeWorkspacePath(path)"
+                />
                 <div v-else class="flex h-full min-h-0 min-w-0 flex-col">
                 <!-- 编辑会话记录：未确认 / 冲突 / 受保护 / 首读失败都在这里给出明确动作。 -->
                 <div v-if="editorSessionNotice" role="status"
@@ -3330,7 +3404,7 @@ onBeforeUnmount(() => {
                     @container-extent="editorWorkbench.setContainer"
                     :context-key="editorWorkbench.gestureContextKey.value" :revision="editorWorkbench.gestureRevision.value"
                     :on-gesture-commit="editorWorkbench.acceptGesture"
-                    @select-tab="editorWorkbench.selectTab" @close-tab="editorWorkbench.closeTab"
+                    @select-tab="(groupId, path) => { writingStore.dismissCentre(); void editorWorkbench.selectTab(groupId, path); }" @close-tab="editorWorkbench.closeTab"
                     @set-pin="editorWorkbench.setPin" @keep-tab="editorWorkbench.keepTab"
                     @move-tab="editorWorkbench.moveTab"
                     @transfer-tab="(payload) => editorWorkbench.transfer(payload)"
@@ -3342,6 +3416,9 @@ onBeforeUnmount(() => {
                     @empty-focus="editorWorkbench.selectGroup" @focus-group="editorWorkbench.selectGroup">
                 <!-- 每片叶挂自己的真实视图宿主：实例 token 与文档身份一起校验，后台组就绪不抢焦点。 -->
                 <template #content="{ groupId }">
+                    <WritingCentrePanel v-if="writingCentreView && groupId === editorWorkbench.activeGroupId.value" class="absolute inset-0 z-20"
+                        :view="writingCentreView" @open-outline="writingStore.openInOutlineWorkbench" @start-writing="writingStore.startWriting"
+                        @retry="(entryId) => void writingStore.loadEntry(entryId)" @close="writingStore.dismissCentre()" />
                     <EditorViewHost v-if="groupPresentation(groupId)?.document"
                         :document="groupPresentation(groupId)!.document!"
                         :editor-id="groupPresentation(groupId)?.editorId ?? null"
@@ -3362,6 +3439,9 @@ onBeforeUnmount(() => {
                         @open-profile-workbench="profileWorkbenchOpen = true" />
                 </template>
                 <template #empty="{ groupId }">
+                    <WritingCentrePanel v-if="writingCentreView && groupId === editorWorkbench.activeGroupId.value" class="absolute inset-0 z-20"
+                        :view="writingCentreView" @open-outline="writingStore.openInOutlineWorkbench" @start-writing="writingStore.startWriting"
+                        @retry="(entryId) => void writingStore.loadEntry(entryId)" @close="writingStore.dismissCentre()" />
                     <EditorWelcome :node="null" :tabs="editorGroups.find((item) => item.id === groupId)?.tabs ?? []" :workspace-mode="workspaceKind"
                         @select-tab="(path) => editorWorkbench.selectTab(groupId, path)" @open-path="(path) => openWelcomeWorkspacePath(path, groupId)"
                         @open-files="openWelcomeFiles" @create-chapter="createWelcomeChapter" @create-markdown-file="createWelcomeMarkdownFile"

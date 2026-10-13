@@ -3,6 +3,9 @@ import {
     OUTLINE_ENTRY_SCHEMA,
     OUTLINE_GRAPH_SCHEMA,
     OUTLINE_LINE_SCHEMA,
+    OUTLINE_SCHEMA,
+    OUTLINE_SCHEMA_V1,
+    OUTLINE_SCHEMA_V2,
     type OutlineEntryKind,
     type OutlineGraph,
     type OutlineId,
@@ -14,7 +17,7 @@ import {
     parseForeshadowMarkers,
     parseForeshadowingMarkdown,
     parseGraphYaml,
-    parseGuidanceAnnotations,
+    type OutlineEntry,
     serializeForeshadowingMarkdown,
     parseLineYaml,
     resolveLineChain,
@@ -68,17 +71,67 @@ describe("outline format", () => {
         }
     });
 
-    it("旧 v1 manifest 读取时丢弃线路引用，并以 v2 写回", () => {
+    it("旧 v1 manifest 读取时丢弃线路引用，并以 v3 写回", () => {
         const manifest = parseManifest(`schema: nbook.outline/v1\nrevision: 3\ntotalId: null\nplans: []\nentries: []\nforeshadowing: []\nlines:\n  - {id: ln-old, path: outline/lines/old--ln-old.yaml, version: 1, contentHash: "sha256:${"0".repeat(64)}"}\n`);
-        expect(manifest).toMatchObject({schema: "nbook.outline/v2", revision: 3, graphs: [], lines: []});
+        expect(manifest).toMatchObject({schema: "nbook.outline/v3", revision: 3, graphs: [], lines: []});
         expect(parseManifest(serializeManifest(manifest))).toEqual(manifest);
+    });
+
+    it("旧 v2 manifest 的全局总纲读取时注入每个方案，写回为不带顶层 totalId 的 v3", () => {
+        const hash = `sha256:${"0".repeat(64)}`;
+        const v2 = [
+            `schema: ${OUTLINE_SCHEMA_V2}`, "revision: 4", "totalId: ol-total",
+            "plans:",
+            "  - id: plan-a", "    title: 甲", "    placements: [{entryId: ol-total, parentId: null, position: 0}]",
+            "  - id: plan-b", "    title: 乙", "    placements: [{entryId: ol-total, parentId: null, position: 0}]",
+            "entries:", `  - {id: ol-total, path: outline/entries/total--ol-total.md, version: 0, contentHash: "${hash}"}`,
+            "foreshadowing: []", "graphs: []", "lines: []", "",
+        ].join("\n");
+        const manifest = parseManifest(v2);
+        expect(manifest.schema).toBe(OUTLINE_SCHEMA);
+        expect(manifest.plans.map(({id, totalId}) => [id, totalId])).toEqual([["plan-a", "ol-total"], ["plan-b", "ol-total"]]);
+        const rewritten = serializeManifest(manifest);
+        expect(rewritten).toContain(`schema: ${OUTLINE_SCHEMA}`);
+        expect(rewritten).not.toMatch(/^totalId:/mu);
+        expect(parseManifest(rewritten)).toEqual(manifest);
+        // v1/v2 声明“没有全局总纲”时，方案无处可共用，必须拒绝而不是静默补一个。
+        expect(() => parseManifest(v2.replace("totalId: ol-total", "totalId: null"))).toThrow(/总纲/);
+    });
+
+    it("v3 schema 不会被只认 v1/v2 的旧式检查接受，未知 schema 以 UNSUPPORTED_SCHEMA 拒绝", () => {
+        const legacyAccepts = (schema: string) => schema === OUTLINE_SCHEMA_V1 || schema === OUTLINE_SCHEMA_V2;
+        expect(OUTLINE_SCHEMA).not.toBe("nbook.outline/v2");
+        expect(OUTLINE_SCHEMA).toBe("nbook.outline/v3");
+        expect(legacyAccepts(OUTLINE_SCHEMA)).toBe(false);
+        expect(createEmptyManifest().schema).toBe(OUTLINE_SCHEMA);
+        const unsupported = (schema: string) => {
+            try { parseManifest(`schema: ${schema}\nrevision: 0\nplans: []\nentries: []\nforeshadowing: []\ngraphs: []\nlines: []\n`); }
+            catch (error) { return (error as OutlineFormatError).diagnostics[0]?.code; }
+            return undefined;
+        };
+        expect(unsupported("nbook.outline/v4")).toBe("UNSUPPORTED_SCHEMA");
+        expect(unsupported("nbook.outline/v0")).toBe("UNSUPPORTED_SCHEMA");
+        expect(unsupported(OUTLINE_SCHEMA)).toBeUndefined();
+    });
+
+    it("v3 manifest 每个方案必须记录自己的 totalId，且 totalId 必须出现在 entries 中", () => {
+        const hash = `sha256:${"0".repeat(64)}`;
+        const manifest = (plan: string) => [
+            `schema: ${OUTLINE_SCHEMA}`, "revision: 1", "plans:", plan,
+            "entries:", `  - {id: ol-total, path: outline/entries/total--ol-total.md, version: 0, contentHash: "${hash}"}`,
+            "foreshadowing: []", "graphs: []", "lines: []", "",
+        ].join("\n");
+        const placements = "    placements: [{entryId: ol-total, parentId: null, position: 0}]";
+        expect(parseManifest(manifest(["  - id: plan-a", "    title: 甲", "    totalId: ol-total", placements].join("\n"))).plans[0]?.totalId).toBe("ol-total");
+        expect(() => parseManifest(manifest(["  - id: plan-a", "    title: 甲", placements].join("\n")))).toThrow(OutlineFormatError);
+        expect(() => parseManifest(manifest(["  - id: plan-a", "    title: 甲", "    totalId: ol-missing", placements].join("\n")))).toThrow(/totalId/);
     });
 
     it("方案图校验节点条目归属、细纲与每方案一条主线", () => {
         const plans = [
-            {id: "plan-a", title: "甲", placements: [{entryId: "ol-total" as const, parentId: null, position: 0},
+            {id: "plan-a", title: "甲", totalId: "ol-total" as const, placements: [{entryId: "ol-total" as const, parentId: null, position: 0},
                 {entryId: "ol-a" as const, parentId: "ol-total" as const, position: 1}]},
-            {id: "plan-b", title: "乙", placements: [{entryId: "ol-total" as const, parentId: null, position: 0}]},
+            {id: "plan-b", title: "乙", totalId: "ol-total" as const, placements: [{entryId: "ol-total" as const, parentId: null, position: 0}]},
         ];
         const kinds = new Map<string, OutlineEntryKind>([["ol-total", "total"], ["ol-a", "chapter"]]);
         const graph = (planId: string, entryId: OutlineId | null, id = "gr-a"): OutlineGraph => ({schema: OUTLINE_GRAPH_SCHEMA,
@@ -89,7 +142,7 @@ describe("outline format", () => {
             id: id as OutlineId, planId, version: 0, title: id, type, fixed: false, nodeIds: [`nd-${planId}-0` as OutlineId]});
         const check = (graphs: OutlineGraph[], lines: OutlineLine[], entryKinds = kinds) =>
             validatePlanningGraphs(graphs, lines, plans, entryKinds);
-        // 不同方案可以共享总纲条目，也各自有主线。
+        // 手动共用同一总纲的方案，也各自有主线。
         expect(() => check([graph("plan-a", "ol-a"), graph("plan-b", null, "gr-b")],
             [line("plan-a", "main", "ln-a"), line("plan-b", "main", "ln-b")])).not.toThrow();
         expect(() => check([graph("plan-b", "ol-a")], [])).toThrow(/不属于所属方案/);
@@ -159,7 +212,7 @@ describe("outline format", () => {
             status: "draft" as const, title: "总纲", parentId: null, chapterId: null, body: ""};
         const first = {...total, id: "ol-a" as const, kind: "volume" as const, title: "甲", parentId: "ol-b" as const};
         const second = {...total, id: "ol-b" as const, kind: "volume" as const, title: "乙", parentId: "ol-a" as const};
-        const manifest = {...createEmptyManifest(), totalId: total.id, plans: [{id: "p", title: "方案", placements: [
+        const manifest = {...createEmptyManifest(), plans: [{id: "p", title: "方案", totalId: total.id, placements: [
             {entryId: total.id, parentId: null, position: 0},
             {entryId: first.id, parentId: second.id, position: 1},
             {entryId: second.id, parentId: first.id, position: 2},
@@ -184,7 +237,7 @@ describe("outline format", () => {
             {entryId: chapter.id, parentId: volume.id, position: 2},
             {entryId: detail.id, parentId: chapter.id, position: 3},
         ];
-        const manifest = {...createEmptyManifest(), totalId: total.id, plans: [{id: "plan-a", title: "方案", placements}]};
+        const manifest = {...createEmptyManifest(), plans: [{id: "plan-a", title: "方案", totalId: total.id, placements}]};
         expect(() => validateManifestAndEntries(manifest, [total, volume, chapter, detail])).not.toThrow();
         expect(() => validateManifestAndEntries(manifest, [total, {...volume, parentId: chapter.id}, chapter, detail])).toThrow();
         expect(() => validateManifestAndEntries(manifest, [total, volume, {...chapter, parentId: total.id}, detail])).not.toThrow();
@@ -205,7 +258,7 @@ describe("outline format", () => {
             {entryId: missingChapterId, parentId: total.id, position: 1},
             {entryId: detail.id, parentId: missingChapterId, position: 2},
         ];
-        const manifest = {...createEmptyManifest(), totalId: total.id, plans: [{id: "plan-a", title: "方案", placements}]};
+        const manifest = {...createEmptyManifest(), plans: [{id: "plan-a", title: "方案", totalId: total.id, placements}]};
         const sharedPath = "outline/entries/shared.md";
         expect(() => parseManifest(serializeManifest({...manifest, entries: [
             {id: total.id, path: sharedPath, version: 0, contentHash: `sha256:${"0".repeat(64)}`},
@@ -221,10 +274,36 @@ describe("outline format", () => {
         expect(() => validateManifestAndEntries(manifest, [total, {...detail, chapterId: "ol-unknown"}],
             "outline", missing)).toThrow(/细纲必须关联章节大纲|未知章节大纲/);
     });
-    it("细纲参考与篇幅要求按结构化字段往返且拒绝越界文件引用", () => {
-        const entry = {schema: OUTLINE_ENTRY_SCHEMA, id: "ol-detail" as const, kind: "detail" as const,
-            version: 0, status: "draft" as const, title: "细纲", parentId: "ol-chapter" as const,
-            chapterId: "ol-chapter" as const, body: "按场景写", materialRefs: ["lorebook/人物/阿青.md"],
+    it("校验每个方案以自己的总纲为唯一根，允许存在未被使用的总纲条目", () => {
+        const base = {schema: OUTLINE_ENTRY_SCHEMA, version: 0, status: "draft" as const, body: "", parentId: null, chapterId: null};
+        const totalA = {...base, id: "ol-total-a" as const, kind: "total" as const, title: "甲总纲"};
+        const totalB = {...base, id: "ol-total-b" as const, kind: "total" as const, title: "乙总纲"};
+        const unusedTotal = {...base, id: "ol-total-unused" as const, kind: "total" as const, title: "孤立总纲"};
+        const volume = {...base, id: "ol-volume" as const, kind: "volume" as const, title: "卷", parentId: totalA.id};
+        const entries = [totalA, totalB, unusedTotal, volume];
+        const plan = (id: string, totalId: OutlineId, placements: {entryId: OutlineId; parentId: OutlineId | null; position: number}[]) =>
+            ({id, title: id, totalId, placements});
+        const planA = plan("plan-a", totalA.id, [{entryId: totalA.id, parentId: null, position: 0}, {entryId: volume.id, parentId: totalA.id, position: 1}]);
+        const planB = plan("plan-b", totalB.id, [{entryId: totalB.id, parentId: null, position: 0}, {entryId: volume.id, parentId: totalB.id, position: 1}]);
+        const check = (plans: ReturnType<typeof plan>[], list: readonly OutlineEntry[] = entries) => {
+            try { validateManifestAndEntries({...createEmptyManifest(), plans}, list); } catch (error) { return (error as OutlineFormatError).diagnostics[0]?.code; }
+            return undefined;
+        };
+        // 各方案总纲不同，卷纲可挂在各自总纲下；未被任何方案使用的总纲是合法的。
+        expect(check([planA, planB])).toBeUndefined();
+        // 方案缺少以自己 totalId 为 null 父级的根。
+        expect(check([plan("plan-a", totalA.id, [{entryId: volume.id, parentId: totalA.id, position: 0}])])).toBe("PLAN_TOTAL_REQUIRED");
+        expect(check([plan("plan-a", totalA.id, [{entryId: totalB.id, parentId: null, position: 0}])])).toBe("PLAN_TOTAL_REQUIRED");
+        // totalId 指向非总纲条目。
+        expect(check([plan("plan-a", volume.id, [{entryId: volume.id, parentId: null, position: 0}])])).toBe("TOTAL_MISMATCH");
+        // 根之外的条目不能没有父级。
+        expect(check([plan("plan-a", totalA.id, [{entryId: totalA.id, parentId: null, position: 0}, {entryId: volume.id, parentId: null, position: 1}])]))
+            .toBe("ORPHAN_PLACEMENT");
+    });
+    it("章节大纲的参考与篇幅要求按结构化字段往返且拒绝越界文件引用", () => {
+        const entry = {schema: OUTLINE_ENTRY_SCHEMA, id: "ol-chapter" as const, kind: "chapter" as const,
+            version: 0, status: "draft" as const, title: "第一章", parentId: "ol-volume" as const,
+            chapterId: null, body: "章节大纲", materialRefs: ["lorebook/人物/阿青.md"],
             writingGuidance: "视角保持克制", references: [{path: "research/背景/雨夜.md"}], targetWords: 2400};
         expect(parseEntryMarkdown(serializeEntryMarkdown(entry))).toMatchObject(entry);
         expect(() => parseEntryMarkdown(serializeEntryMarkdown({...entry, references: [{path: "../workspace/secret"}]}))).toThrow();
@@ -237,7 +316,7 @@ describe("outline format", () => {
         expect(() => parseEntryMarkdown(serializeEntryMarkdown({...entry, targetWords: 1.5}))).toThrow();
     });
     it("参考文件升级为结构化 references；待补资料可无路径但必须说明所需资料", () => {
-        const head = "---\nschema: nbook.outline-entry/v1\nid: ol-detail\nkind: detail\nversion: 0\nstatus: draft\ntitle: 细纲\nparentId: ol-chapter\nchapterId: ol-chapter\n";
+        const head = "---\nschema: nbook.outline-entry/v1\nid: ol-chapter\nkind: chapter\nversion: 0\nstatus: draft\ntitle: 第一章\nparentId: ol-volume\nchapterId: null\n";
         expect(parseEntryMarkdown(`${head}referenceFiles:\n  - research/雨夜.md\n---\n正文`)).toMatchObject({
             schema: OUTLINE_ENTRY_SCHEMA, references: [{path: "research/雨夜.md"}]});
         expect(() => parseEntryMarkdown(`${head}referenceFiles: [a.md]\nreferences: [{path: a.md}]\n---\n`)).toThrow(/不能同时出现/);
@@ -252,21 +331,28 @@ describe("outline format", () => {
         expect(() => parseEntryMarkdown(serializeEntryMarkdown({...entry,
             references: [{path: "a.md"}, {path: "a.md", pending: true}]}))).toThrow();
         expect(() => parseEntryMarkdown(`${head}references: [{path: a.md, note: x}]\n---\n`)).toThrow(/未知字段/);
+        expect(() => parseEntryMarkdown(`${head}references: [{path: a.md, marker: r1}]\n---\n`)).toThrow(/未知字段/);
     });
-    it("写作指导按场景锚定并 fail-closed 解析篇幅预算", () => {
-        const guide = (marker: string, attrs: string, text: string) =>
-            `<!-- nb:guidance marker="${marker}" ${attrs} -->${text}<!-- /nb:guidance marker="${marker}" -->`;
-        expect(parseGuidanceAnnotations(`开头${guide("g1", 'scene="雨夜" words="800"', "略写")}${guide("g2", 'scene="对峙"', "展开")}`))
-            .toMatchObject([{marker: "g1", scene: "雨夜", words: 800, text: "略写"}, {marker: "g2", scene: "对峙", text: "展开"}]);
-        expect(() => parseGuidanceAnnotations(guide("g1", 'words="800"', "缺场景"))).toThrow(/场景/);
-        expect(() => parseGuidanceAnnotations(guide("g1", 'scene="雨夜" words="0"', "零"))).toThrow(/正整数/);
-        expect(() => parseGuidanceAnnotations(guide("g1", 'scene="雨夜" tone="冷"', "未知"))).toThrow(/未知属性/);
-        expect(() => parseGuidanceAnnotations(`${guide("g1", 'scene="a"', "x")}${guide("g1", 'scene="b"', "y")}`)).toThrow(/不唯一/);
-        expect(() => parseGuidanceAnnotations('<!-- nb:guidance marker="g1" scene="a" -->未闭合')).toThrow(/未闭合/);
+    it("细纲的写作信息只写在正文里：旧 frontmatter 字段不读取，写入时也不保留", () => {
+        const legacy = [
+            "---", "schema: nbook.outline-entry/v2", "id: ol-detail", "kind: detail", "version: 3", "status: draft", "title: 细纲",
+            "parentId: ol-chapter", "chapterId: ol-chapter", "materialRefs: [lorebook/人物/阿青.md]", "writingGuidance: 放慢",
+            "targetWords: 2000", "perspective: 第三人称", "references: [{path: notes/a.md, marker: r1}]",
+            "guides: [{marker: g1, instructions: 放慢}]", "scenes: [{heading: 入城, mood: 冷}]", "---",
+            '<!-- nb:guidance marker="g1" -->正文<!-- /nb:guidance marker="g1" -->',
+        ].join("\n");
+        const parsed = parseEntryMarkdown(legacy);
+        expect(parsed).toMatchObject({kind: "detail", materialRefs: ["lorebook/人物/阿青.md"]});
+        for (const key of ["writingGuidance", "targetWords", "references", "perspective", "guides", "scenes"]) {
+            expect(parsed).not.toHaveProperty(key);
+        }
+        const written = serializeEntryMarkdown({...parsed, writingGuidance: "放慢", targetWords: 2000, references: [{path: "notes/a.md"}]});
+        expect(written).not.toMatch(/writingGuidance|targetWords|references|perspective|guides|scenes/u);
+        expect(parseEntryMarkdown(written)).toEqual(parsed);
     });
     it("提供空 manifest，避免新项目自行拼接 schema", () => {
         const manifest = createEmptyManifest();
         expect(manifest.revision).toBe(0);
-        expect(manifest).toMatchObject({schema: "nbook.outline/v2", graphs: [], lines: []});
+        expect(manifest).toMatchObject({schema: "nbook.outline/v3", graphs: [], lines: []});
     });
 });

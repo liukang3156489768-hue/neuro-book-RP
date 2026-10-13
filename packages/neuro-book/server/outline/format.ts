@@ -1,7 +1,12 @@
 import {createHash, randomUUID} from "node:crypto";
 import YAML from "yaml";
+import {detailReferences} from "nbook/shared/outline-detail-structure";
+import {isMaterialBasePath} from "./adaptation-path";
 
-export const OUTLINE_SCHEMA = "nbook.outline/v2" as const;
+/** v3 起每个方案各有自己的 totalId；旧版本读取到该 schema 会按 UNSUPPORTED_SCHEMA 拒绝，不会把方案误读为共用全局总纲。 */
+export const OUTLINE_SCHEMA = "nbook.outline/v3" as const;
+/** v2 manifest 只有一个全局 totalId；读取时归一为“所有方案共用该总纲”，写回一律为 v3。 */
+export const OUTLINE_SCHEMA_V2 = "nbook.outline/v2" as const;
 /** v1 manifest 的 lines 指向已废弃的自带节点线路；读取时丢弃，写回一律为 v2。 */
 export const OUTLINE_SCHEMA_V1 = "nbook.outline/v1" as const;
 /** v1 条目只有路径数组形式的参考文件；读取分支仍须接受它，写入一律使用 v2。 */
@@ -23,10 +28,11 @@ export type ForeshadowAction = "plant" | "reinforce" | "recover";
 export type OutlineManifest = Readonly<{
     schema: typeof OUTLINE_SCHEMA;
     revision: number;
-    totalId: OutlineId | null;
     plans: readonly Readonly<{
         id: string;
         title: string;
+        /** 方案自己的总纲；多个方案可经手动关联指向同一条目。 */
+        totalId: OutlineId;
         placements: readonly Readonly<{
             entryId: OutlineId;
             parentId: OutlineId | null;
@@ -60,6 +66,12 @@ export type PendingReferenceWarning = Readonly<{
     purpose?: string;
 }>;
 
+/** 待补告警与参考路径都按这份清单计算。细纲的参考资料写在正文各场景里，没有链接的项是待补资料。 */
+export function allEntryReferences(entry: Pick<OutlineEntry, "kind" | "references" | "body">): OutlineReference[] {
+    if (entry.kind !== "detail") return [...entry.references ?? []];
+    return detailReferences(entry.body).map(({label, path}) => path === undefined ? {pending: true, locator: label} : {path, purpose: label});
+}
+
 export function pendingReferenceWarnings(
     entryId: OutlineId, entryPath: string, references: readonly OutlineReference[] = [],
 ): PendingReferenceWarning[] {
@@ -84,9 +96,30 @@ export type OutlineEntry = Readonly<{
     writingGuidance?: string;
     references?: readonly OutlineReference[];
     targetWords?: number;
+    adaptation?: OutlineAdaptation;
+    materialUpdates?: readonly OutlineMaterialUpdate[];
     analysis?: DetailAnalysis;
+    /** 细纲的采用依据；缺省即分析审阅（依据是 analysis 报告）。 */
+    basis?: DetailBasis;
     body: string;
 }>;
+
+/** 原作位置使用稳定条目 ID，显示章号与目标方案顺序独立。 */
+export type OutlineAdaptation =
+    | Readonly<{kind: "chapter"; sourcePlanId: string; sourceEntryId: OutlineId}>
+    | Readonly<{kind: "between"; sourcePlanId: string; beforeEntryId: OutlineId; afterEntryId: OutlineId}>;
+
+export type OutlineMaterialUpdate = Readonly<{
+    materialPath: string;
+    kind: "experience" | "relationship" | "item" | "location";
+    body: string;
+}>;
+
+/**
+ * 来源提取：由提取流水线写入的正式细纲，依据是原作文引用而不是偏差分析。
+ * 它不随上游链变化退回草稿；用户编辑正文后 basis 被清除，回到常规分析审阅（见 library.ts 的 editEntry）。
+ */
+export type DetailBasis = Readonly<{kind: "source-extraction"; sources: readonly Readonly<{path: string; locator: string}>[]}>;
 
 export type DetailAnalysis = Readonly<{
     reportId: string;
@@ -164,15 +197,6 @@ export type ForeshadowMarker = Readonly<{
     endOffset: number;
 }>;
 
-export type GuidanceAnnotation = Readonly<{
-    marker: string;
-    scene: string;
-    words?: number;
-    text: string;
-    startOffset: number;
-    endOffset: number;
-}>;
-
 export type OutlineDiagnostic = Readonly<{
     code: string;
     message: string;
@@ -211,7 +235,6 @@ export function createEmptyManifest(): OutlineManifest {
     return {
         schema: OUTLINE_SCHEMA,
         revision: 0,
-        totalId: null,
         plans: [],
         entries: [],
         foreshadowing: [],
@@ -226,15 +249,17 @@ export function serializeManifest(manifest: OutlineManifest): string {
 export function parseManifest(content: string, path = "outline/manifest.yaml"): OutlineManifest {
     const value = parseYaml<unknown>(content, path);
     assertRecord(value, path);
-    if (value.schema !== OUTLINE_SCHEMA && value.schema !== OUTLINE_SCHEMA_V1) {
+    if (value.schema !== OUTLINE_SCHEMA && value.schema !== OUTLINE_SCHEMA_V2 && value.schema !== OUTLINE_SCHEMA_V1) {
         fail("UNSUPPORTED_SCHEMA", `不支持的 schema：${String(value.schema)}`, `${path}.schema`);
     }
     const legacy = value.schema === OUTLINE_SCHEMA_V1;
+    // v1/v2 的全局总纲是所有方案共同的根；归一后每个方案各自记录它，用户文件本身不被改写。
+    const legacyTotalId = value.schema === OUTLINE_SCHEMA ? undefined
+        : value.totalId === null ? null : stableId(value.totalId, `${path}.totalId`, "ol");
     const manifest: OutlineManifest = {
         schema: OUTLINE_SCHEMA,
         revision: positiveInteger(value.revision, `${path}.revision`, true),
-        totalId: value.totalId === null ? null : stableId(value.totalId, `${path}.totalId`, "ol"),
-        plans: array(value.plans, `${path}.plans`).map((plan, index) => parsePlan(plan, `${path}.plans[${index}]`)),
+        plans: array(value.plans, `${path}.plans`).map((plan, index) => parsePlan(plan, `${path}.plans[${index}]`, legacyTotalId)),
         entries: parseManifestRefs(value.entries, `${path}.entries`, "ol"),
         foreshadowing: parseManifestRefs(value.foreshadowing, `${path}.foreshadowing`, "fo"),
         graphs: legacy ? [] : parseManifestRefs(value.graphs, `${path}.graphs`, "gr"),
@@ -244,8 +269,10 @@ export function parseManifest(content: string, path = "outline/manifest.yaml"): 
     assertUnique(refs.map((item) => item.id), `${path} 中的稳定 ID`);
     const paths = refs.map((item) => item.path);
     if (new Set(paths).size !== paths.length) fail("DUPLICATE_PATH", "manifest 文件路径重复", path);
-    if (manifest.totalId !== null && !manifest.entries.some((entry) => entry.id === manifest.totalId)) {
-        fail("UNKNOWN_TOTAL", "manifest.totalId 未出现在 entries 中", path);
+    for (const plan of manifest.plans) {
+        if (!manifest.entries.some((entry) => entry.id === plan.totalId)) {
+            fail("UNKNOWN_TOTAL", `方案 ${plan.id} 的 totalId 未出现在 entries 中`, path);
+        }
     }
     return manifest;
 }
@@ -260,7 +287,9 @@ export function parseEntryMarkdown(content: string, path = "outline/entries/entr
         fail("CONFLICTING_REFERENCES", "referenceFiles 与 references 不能同时出现", path);
     }
     const kind = enumValue(frontmatter.kind, ["total", "volume", "chapter", "detail"] as const, `${path}.kind`);
-    const references = frontmatter.references !== undefined
+    // 细纲的写作信息全部写在正文里；旧细纲 frontmatter 中的 scenes、guides、references 等不再读取，下次保存时去掉。
+    const detail = kind === "detail";
+    const references = detail ? undefined : frontmatter.references !== undefined
         ? parseReferences(frontmatter.references, `${path}.references`)
         : frontmatter.referenceFiles === undefined ? undefined
             : parseFileRefs(frontmatter.referenceFiles, `${path}.referenceFiles`).map((ref) => ({path: ref}));
@@ -274,13 +303,20 @@ export function parseEntryMarkdown(content: string, path = "outline/entries/entr
         parentId: nullableStableId(frontmatter.parentId, `${path}.parentId`),
         chapterId: nullableStableId(frontmatter.chapterId, `${path}.chapterId`),
         ...(frontmatter.materialRefs === undefined ? {} : {materialRefs: parseFileRefs(frontmatter.materialRefs, `${path}.materialRefs`)}),
-        ...(frontmatter.writingGuidance === undefined ? {} : {writingGuidance: stringValue(frontmatter.writingGuidance, `${path}.writingGuidance`)}),
+        ...(detail || frontmatter.writingGuidance === undefined ? {} : {writingGuidance: stringValue(frontmatter.writingGuidance, `${path}.writingGuidance`)}),
         ...(references === undefined ? {} : {references}),
-        ...(frontmatter.targetWords === undefined ? {} : {targetWords: positiveInteger(frontmatter.targetWords, `${path}.targetWords`)}),
+        ...(detail || frontmatter.targetWords === undefined ? {} : {targetWords: positiveInteger(frontmatter.targetWords, `${path}.targetWords`)}),
+        ...(frontmatter.adaptation === undefined ? {} : {adaptation: parseAdaptation(frontmatter.adaptation, `${path}.adaptation`)}),
+        ...(frontmatter.materialUpdates === undefined ? {} : {materialUpdates: parseMaterialUpdates(frontmatter.materialUpdates, `${path}.materialUpdates`)}),
         ...(frontmatter.analysis === undefined ? {} : {analysis: parseDetailAnalysis(frontmatter.analysis, `${path}.analysis`)}),
+        ...(frontmatter.basis === undefined ? {} : {basis: parseDetailBasis(frontmatter.basis, `${path}.basis`)}),
         body,
     };
     if (entry.analysis && entry.kind !== "detail") fail("INVALID_ANALYSIS", "只有细纲可保存分析报告", path);
+    if (entry.adaptation && entry.kind !== "chapter") fail("INVALID_ADAPTATION", "来源章节定位只属于章节大纲，细纲沿用所属章节的定位", path);
+    if (entry.basis && (entry.kind !== "detail" || entry.status !== "adopted" || entry.analysis)) {
+        fail("INVALID_BASIS", "来源提取依据只属于不带分析报告的正式细纲", path);
+    }
     if (entry.kind === "total" && (entry.parentId !== null || entry.chapterId !== null)) fail("INVALID_PARENT", "总纲不能有父级或章节关联", path);
     if (entry.kind === "detail" && entry.chapterId === null) fail("DETAIL_WITHOUT_CHAPTER", "细纲必须关联章节大纲", path);
     return entry;
@@ -292,19 +328,35 @@ export function serializeEntryMarkdown(entry: OutlineEntry): string {
         id: entry.id,
         kind: entry.kind,
         ...(entry.materialRefs === undefined ? {} : {materialRefs: entry.materialRefs}),
-        ...(entry.writingGuidance === undefined ? {} : {writingGuidance: entry.writingGuidance}),
-        ...(entry.references === undefined ? {} : {references: entry.references.map((reference) => ({
+        // 细纲的这三项写在正文模板里；解析时不读，写入时也不保留，文件与内容哈希只有一种形式。
+        ...(entry.kind === "detail" || entry.writingGuidance === undefined ? {} : {writingGuidance: entry.writingGuidance}),
+        ...(entry.kind === "detail" || entry.references === undefined ? {} : {references: entry.references.map((reference) => ({
             ...(reference.path === undefined ? {} : {path: reference.path}),
             locator: reference.locator ?? null, purpose: reference.purpose ?? null, pending: reference.pending ?? null,
         }))}),
-        ...(entry.targetWords === undefined ? {} : {targetWords: entry.targetWords}),
+        ...(entry.kind === "detail" || entry.targetWords === undefined ? {} : {targetWords: entry.targetWords}),
+        ...(entry.adaptation === undefined ? {} : {adaptation: entry.adaptation}),
+        ...(entry.materialUpdates === undefined ? {} : {materialUpdates: entry.materialUpdates}),
         ...(entry.analysis === undefined ? {} : {analysis: entry.analysis}),
+        ...(entry.basis === undefined ? {} : {basis: entry.basis}),
         parentId: entry.parentId,
         schema: entry.schema,
         status: entry.status,
         title: entry.title,
         version: entry.version,
     })}---\n${entry.body}`;
+}
+
+function parseDetailBasis(value: unknown, location: string): DetailBasis {
+    assertRecord(value, location);
+    if (value.kind !== "source-extraction") fail("INVALID_BASIS", "未知的细纲采用依据", location + ".kind");
+    const sources = array(value.sources, location + ".sources").map((item, index) => {
+        const at = location + ".sources[" + index + "]";
+        assertRecord(item, at);
+        return {path: nonEmptyString(item.path, at + ".path"), locator: nonEmptyString(item.locator, at + ".locator")};
+    });
+    if (sources.length === 0) fail("INVALID_BASIS", "来源提取依据必须带原文引用", location + ".sources");
+    return {kind: "source-extraction", sources};
 }
 
 function parseDetailAnalysis(value: unknown, location: string): DetailAnalysis {
@@ -495,88 +547,17 @@ export function parseForeshadowMarkers(
     return result;
 }
 
-/**
- * 写作指导按场景锚定；`scene` 必填，`words` 是该场景的篇幅预算。
- *
- * 与伏笔标记同构：注释语法损坏、未配对、属性重复或未知都 fail-closed，
- * 因为静默丢弃会让细纲看起来少了约束，而作者无法察觉。
- */
-export function parseGuidanceAnnotations(body: string, path = "outline/entries/entry.md"): readonly GuidanceAnnotation[] {
-    const tokenPattern = /<!--([\s\S]*?)-->/gu;
-    const open = new Map<string, {scene: string; words?: number; contentStart: number; startOffset: number}>();
-    const result: GuidanceAnnotation[] = [];
-    const used = new Set<string>();
-    let match: RegExpExecArray | null;
-    let scannedUntil = 0;
-    while ((match = tokenPattern.exec(body)) !== null) {
-        if (/<!--\s*\/?nb:guidance/iu.test(body.slice(scannedUntil, match.index))) {
-            fail("INVALID_GUIDANCE", "写作指导注释未正确闭合", path, scannedUntil);
-        }
-        scannedUntil = tokenPattern.lastIndex;
-        const comment = match[1] ?? "";
-        const token = /^\s*(\/?)nb:guidance\b([\s\S]*)$/u.exec(comment);
-        if (!token) {
-            if (/^\s*\/?nb:guidance/iu.test(comment)) fail("INVALID_GUIDANCE", "写作指导注释语法损坏", path, match.index);
-            continue;
-        }
-        const closing = token[1] === "/";
-        const attributes = parseAttributes(token[2] ?? "", path, match.index, "写作指导");
-        const rawMarker = attributes.marker;
-        const marker = typeof rawMarker === "string" ? rawMarker.trim() : "";
-        if (!marker) fail("INVALID_GUIDANCE", "写作指导 marker 不能为空", path, match.index);
-        for (const key of Object.keys(attributes)) {
-            if (key !== "marker" && key !== "scene" && key !== "words") {
-                fail("INVALID_GUIDANCE", `写作指导标记存在未知属性：${key}`, path, match.index);
-            }
-        }
-        if (closing) {
-            if (Object.keys(attributes).some((key) => key !== "marker")) {
-                fail("INVALID_GUIDANCE_END", "写作指导结束标记只能包含 marker", path, match.index);
-            }
-            const pending = open.get(marker);
-            if (!pending) fail("UNMATCHED_MARKER_END", `写作指导结束标记没有对应开始：${marker}`, path, match.index);
-            open.delete(marker);
-            result.push({marker, scene: pending.scene, ...(pending.words === undefined ? {} : {words: pending.words}),
-                text: body.slice(pending.contentStart, match.index), startOffset: pending.startOffset, endOffset: tokenPattern.lastIndex});
-            continue;
-        }
-        if (used.has(marker) || open.has(marker)) fail("DUPLICATE_MARKER", `写作指导 marker 在文档内不唯一：${marker}`, path, match.index);
-        if (open.size > 0) fail("NESTED_MARKER", "写作指导标记不能嵌套或交叉", path, match.index);
-        const scene = attributes.scene;
-        if (typeof scene !== "string" || scene.trim() === "") {
-            fail("INVALID_GUIDANCE", "写作指导必须标注场景", path, match.index);
-        }
-        const words = attributes.words === undefined ? undefined : positiveIntegerFromString(attributes.words, `${path} 写作指导 ${marker}.words`);
-        used.add(marker);
-        open.set(marker, {scene: scene.trim(), ...(words === undefined ? {} : {words}), contentStart: tokenPattern.lastIndex, startOffset: match.index});
-    }
-    if (/<!--\s*\/?nb:guidance/iu.test(body.slice(scannedUntil))) {
-        fail("INVALID_GUIDANCE", "写作指导注释未正确闭合", path, scannedUntil);
-    }
-    if (open.size > 0) {
-        fail("UNMATCHED_MARKER_START", `写作指导开始标记未闭合：${[...open.keys()].join(", ")}`, path);
-    }
-    return result;
-}
-
-/** 注释属性只有十进制文本形式，缺省或非法都不可猜成正数。 */
-function positiveIntegerFromString(value: string, path: string): number {
-    if (!/^[1-9][0-9]*$/u.test(value.trim())) fail("INVALID_INTEGER", "必须是正整数", path);
-    return Number(value.trim());
-}
-
 export function validateManifestAndEntries(manifest: OutlineManifest, entries: readonly OutlineEntry[], path = "outline", knownMissingEntryIds: ReadonlySet<OutlineId> = new Set()): void {
-    const totalEntries = entries.filter((entry) => entry.kind === "total");
-    if (totalEntries.length > 1) fail("MULTIPLE_TOTAL", "规划范围内只能有一个总纲", path);
-    if (manifest.totalId !== null && totalEntries[0]?.id !== manifest.totalId && (totalEntries.length > 0 || !knownMissingEntryIds.has(manifest.totalId))) fail("TOTAL_MISMATCH", "manifest 根总纲与 entry 不一致", path);
-    if (manifest.totalId === null && totalEntries.length > 0) fail("TOTAL_NOT_IN_MANIFEST", "总纲必须由 manifest.totalId 指向", path);
     const ids = new Set(entries.map((entry) => entry.id));
     const entriesById = new Map(entries.map((entry) => [entry.id, entry]));
     assertAcyclicParents(new Map(entries.map((entry) => [entry.id, entry.parentId])), path);
     const planIds = new Set<string>();
     for (const plan of manifest.plans) {
-        if (manifest.totalId === null || plan.placements.filter((place) => place.entryId === manifest.totalId && place.parentId === null).length !== 1) {
-            fail("PLAN_TOTAL_REQUIRED", `方案 ${plan.id} 必须引用唯一全局总纲作为根`, path);
+        if (plan.placements.filter((place) => place.entryId === plan.totalId && place.parentId === null).length !== 1) {
+            fail("PLAN_TOTAL_REQUIRED", `方案 ${plan.id} 必须以自己的总纲作为唯一根`, path);
+        }
+        if (entriesById.has(plan.totalId) ? entriesById.get(plan.totalId)!.kind !== "total" : !knownMissingEntryIds.has(plan.totalId)) {
+            fail("TOTAL_MISMATCH", `方案 ${plan.id} 的 totalId 不是总纲条目`, path);
         }
         if (planIds.has(plan.id)) fail("DUPLICATE_PLAN", `方案 ID 重复：${plan.id}`, path);
         planIds.add(plan.id);
@@ -589,7 +570,7 @@ export function validateManifestAndEntries(manifest: OutlineManifest, entries: r
             positions.add(placement.position);
             if (!ids.has(placement.entryId) && !knownMissingEntryIds.has(placement.entryId)) fail("UNKNOWN_PLACEMENT_ENTRY", `方案引用不存在的大纲条目：${placement.entryId}`, path);
             if (placement.parentId !== null && !ids.has(placement.parentId) && !knownMissingEntryIds.has(placement.parentId)) fail("UNKNOWN_PLACEMENT_PARENT", `方案引用不存在的父级：${placement.parentId}`, path);
-            if (placement.entryId !== manifest.totalId && placement.parentId === null) fail("ORPHAN_PLACEMENT", `方案条目缺少父级：${placement.entryId}`, path);
+            if (placement.entryId !== plan.totalId && placement.parentId === null) fail("ORPHAN_PLACEMENT", `方案条目缺少父级：${placement.entryId}`, path);
         }
         for (const placement of plan.placements) {
             if (placement.parentId !== null && !placementIds.has(placement.parentId)) {
@@ -740,8 +721,12 @@ export function resolveLineChain(graph: OutlineGraph | undefined, nodeIds: reado
     return {nodes, edges, problem};
 }
 
-export function createStableId(prefix: OutlineIdPrefix): OutlineId {
-    return `${prefix}-${randomUUID()}` as OutlineId;
+/** 预览与确认提交共用创建种子，确保展示的文件路径和最终发布相同；普通领域调用仍随机生成。 */
+export function createStableId(prefix: OutlineIdPrefix, seed?: string): OutlineId {
+    if (seed === undefined) return `${prefix}-${randomUUID()}` as OutlineId;
+    const digest = createHash("sha256").update(prefix).update("\0").update(seed).digest("hex");
+    const uuid = `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+    return `${prefix}-${uuid}` as OutlineId;
 }
 
 export function stableId(value: unknown, path: string, expectedPrefix?: OutlineIdPrefix): OutlineId {
@@ -771,11 +756,13 @@ function parseMarkdownFrontmatter(content: string, path: string): {frontmatter: 
     return {frontmatter, body: match[2] ?? ""};
 }
 
-function parsePlan(value: unknown, path: string): OutlineManifest["plans"][number] {
+function parsePlan(value: unknown, path: string, legacyTotalId: OutlineId | null | undefined): OutlineManifest["plans"][number] {
     assertRecord(value, path);
+    if (legacyTotalId === null) fail("PLAN_TOTAL_REQUIRED", `方案 ${String(value.id)} 必须引用唯一全局总纲作为根`, path);
     return {
         id: nonEmptyString(value.id, `${path}.id`),
         title: nonEmptyString(value.title, `${path}.title`),
+        totalId: legacyTotalId ?? stableId(value.totalId, `${path}.totalId`, "ol"),
         placements: array(value.placements, `${path}.placements`).map((item, index) => {
             const placementPath = `${path}.placements[${index}]`;
             assertRecord(item, placementPath);
@@ -853,6 +840,40 @@ function parseFileRefs(value: unknown, path: string): string[] {
     });
     assertUnique(refs, path);
     return refs;
+}
+
+function parseAdaptation(value: unknown, path: string): OutlineAdaptation {
+    assertRecord(value, path);
+    const kind = enumValue(value.kind, ["chapter", "between"] as const, `${path}.kind`);
+    const allowed = kind === "chapter" ? ["kind", "sourcePlanId", "sourceEntryId"]
+        : ["kind", "sourcePlanId", "beforeEntryId", "afterEntryId"];
+    if (Object.keys(value).some((key) => !allowed.includes(key))) fail("INVALID_ADAPTATION", "来源定位含有不适用的字段", path);
+    const sourcePlanId = nonEmptyString(value.sourcePlanId, `${path}.sourcePlanId`);
+    return kind === "chapter"
+        ? {kind, sourcePlanId, sourceEntryId: stableId(value.sourceEntryId, `${path}.sourceEntryId`, "ol")}
+        : {kind, sourcePlanId, beforeEntryId: stableId(value.beforeEntryId, `${path}.beforeEntryId`, "ol"),
+            afterEntryId: stableId(value.afterEntryId, `${path}.afterEntryId`, "ol")};
+}
+
+function parseMaterialUpdates(value: unknown, path: string): OutlineMaterialUpdate[] {
+    const seen = new Set<string>();
+    return array(value, path).map((item, index) => {
+        const at = `${path}[${index}]`;
+        assertRecord(item, at);
+        if (Object.keys(item).some((key) => !["materialPath", "kind", "body"].includes(key))) {
+            fail("INVALID_MATERIAL_UPDATE", "改编信息含有未知字段", at);
+        }
+        const materialPath = nonEmptyString(item.materialPath, `${at}.materialPath`);
+        const kind = enumValue(item.kind, ["experience", "relationship", "item", "location"] as const, `${at}.kind`);
+        if (!isMaterialBasePath(materialPath) || (kind === "item" || kind === "location"
+            ? !materialPath.startsWith(`lorebook/${kind}/`) : !materialPath.startsWith("lorebook/character/"))) {
+            fail("INVALID_MATERIAL_UPDATE", "改编信息必须指向对应角色、物品或地点的基础 index.md", at);
+        }
+        const key = `${materialPath.toLocaleLowerCase("en-US")}:${kind}`;
+        if (seen.has(key)) fail("INVALID_MATERIAL_UPDATE", "同一素材的同类改编信息不能重复", at);
+        seen.add(key);
+        return {materialPath, kind, body: nonEmptyString(item.body, `${at}.body`)};
+    });
 }
 
 /** v2 参考文件禁止未知字段和空对象；只写 path 的条目等价于 v1 的历史语义。 */

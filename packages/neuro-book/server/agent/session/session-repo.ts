@@ -8,7 +8,7 @@ import {consola} from "consola";
 import type {JsonValue} from "nbook/server/agent/messages/types";
 import type {StoredAgentMessage} from "nbook/server/agent/messages/stored-types";
 import {parseStoredAttachment, parseStoredMessage, StoredMessageInvariantError} from "nbook/server/agent/messages/stored-message-codec";
-import {createStoredUserMessage, sumAssistantUsage} from "nbook/server/agent/messages/message-utils";
+import {createStoredUserMessage, EMPTY_USAGE, sumAssistantUsage} from "nbook/server/agent/messages/message-utils";
 import type {
     CompactionSessionEntry,
     NeuroSessionContext,
@@ -33,6 +33,7 @@ import {parseDurableSessionModelRef} from "nbook/server/agent/session/session-mo
 import {ProjectRootDtoSchema} from "nbook/shared/dto/project.dto";
 import {AgentSessionNotFoundError} from "nbook/server/agent/session/session-not-found-error";
 import {resolveSessionIdentity, createSessionIdentity} from "nbook/server/agent/session/session-identity";
+import {projectToolContextPath} from "nbook/server/agent/session/tool-context-projection";
 
 type CreateSessionInput = {
     profileKey: string;
@@ -622,11 +623,14 @@ export class JsonlSessionRepository {
         return path.reverse();
     }
 
-    /**
-     * 将 active path reduce 成 harness context。
-     */
+    /** 当前分支的模型投影；原 activePath 继续拥有审计、分支和费用真相。 */
+    modelVisiblePath(snapshot: SessionSnapshot): SessionEntry[] {
+        return projectToolContextPath(this.activePath(snapshot));
+    }
+
+    /** 将当前分支归约为运行上下文，含持久工具替换与摘要。 */
     reduce(snapshot: SessionSnapshot): NeuroSessionContext {
-        const path = this.activePath(snapshot);
+        const path = this.modelVisiblePath(snapshot);
         const pathIds = new Set(path.map((entry) => entry.id));
         const messages: StoredAgentMessage[] = [];
         const customState: Record<string, JsonValue> = {};
@@ -648,6 +652,7 @@ export class JsonlSessionRepository {
             }
         }
 
+        const modelEntries = new Map(path.map(entry => [entry.id, entry]));
         const reduceEntries = snapshot.entries.filter((entry) => {
             if (pathIds.has(entry.id)) {
                 return true;
@@ -655,7 +660,7 @@ export class JsonlSessionRepository {
             return (entry.type === "custom" || entry.type === "session_update")
                 && entry.origin === "projection"
                 && this.projectionApplies(entry.projectionScope, pathIds);
-        });
+        }).map(entry => modelEntries.get(entry.id) ?? entry);
 
         for (const entry of reduceEntries) {
             if (entry.type === "message") {
@@ -885,12 +890,18 @@ export class JsonlSessionRepository {
 
         const keptEntryIds = new Set(path.slice(path.findIndex((entry) => entry.id === compaction.firstKeptEntryId)).map((entry) => entry.id));
         const keptMessages: StoredAgentMessage[] = [];
+        let beforeCheckpoint = true;
         for (const entry of path) {
+            if (entry.id === compaction.id) beforeCheckpoint = false;
             if (!keptEntryIds.has(entry.id)) {
                 continue;
             }
             if (entry.type === "message") {
-                keptMessages.push(entry.message);
+                // Provider usage before this checkpoint describes the removed history, not the active context.
+                // Raw entries still own cost accounting; only the compacted projection invalidates this estimate.
+                keptMessages.push(beforeCheckpoint && entry.message.role === "assistant"
+                    ? {...entry.message, usage: EMPTY_USAGE}
+                    : entry.message);
             }
             if (entry.type === "custom_message" && entry.visibleToModel) {
                 keptMessages.push(entry.message);

@@ -210,6 +210,10 @@ const zhCN = {
                 label: "Embedding",
                 description: "配置 RAG 使用的嵌入服务。",
             },
+            summarizerModel: {
+                label: "摘要模型",
+                description: "选择上下文摘要使用的模型。",
+            },
             cost: {
                 label: "费用显示",
                 description: "设置 Agent 费用展示币种和汇率。",
@@ -221,6 +225,10 @@ const zhCN = {
             agentProfileModels: {
                 label: "Agent Profile",
                 description: "配置默认 Profile、模型参数和 Profile 设置。",
+            },
+            promptManagement: {
+                label: "提示词管理",
+                description: "管理设计、规划和写作的提示词预设。",
             },
             observability: {
                 label: "可观测",
@@ -843,7 +851,7 @@ const zhCN = {
                 providerId: "配置 ID",
                 providerIdPlaceholder: "例如 siliconflow 或 deepseek-cn",
                 providerIdentityImmutable: "已保存 Provider 的连接身份不可直接修改，请先复制连接。",
-                providerIdentityHint: "配置 ID、Base URL 与代理属于连接身份；需要修改时请复制连接。",
+                providerIdentityHint: "Provider ID 用于保持模型引用；Base URL 与代理可以直接修改。",
                 providerName: "服务商名称",
                 providerNamePlaceholder: "例如 SiliconFlow",
                 providerModelApi: "Provider 默认接口格式",
@@ -876,6 +884,8 @@ const zhCN = {
                 discoveryTitle: "{provider} 模型发现",
                 remoteComplete: "远端完整",
                 needsManualCompletion: "需要补充",
+                completeDiscoveredModel: "补充模型能力后加入 Provider",
+                enableDiscoveredModel: "启用此模型",
                 libraryNotDiscovered: "这里是 NeuroBook 维护的标准模型资料，不代表当前 Provider 实际提供这些模型。添加后请执行模型检测。",
                 noLibraryMetadata: "Model Library 中没有该模型的标准资料。",
                 noProviderSelected: "未选择 Provider",
@@ -910,6 +920,8 @@ const zhCN = {
             container: {
                 tools: "工具",
                 agent: "Agent",
+                outline: "大纲",
+                writing: "写作",
                 panel: "面板",
                 actions: "容器操作",
                 notReady: "工具位置记录尚未就绪",
@@ -1633,6 +1645,8 @@ const zhCN = {
         },
         toolPanel: {
             files: "文件",
+            writingOutline: "大纲",
+            writingSession: "写作",
             characters: "角色",
             plot: "剧情",
             outline: "剧情大纲",
@@ -2605,6 +2619,7 @@ const zhCN = {
             menuDeleteComment: "删除评论",
             menuAddRuby: "添加注音",
             menuAddBilingual: "对照译文",
+            menuRewriteSelection: "改写选中内容",
             rubyText: "注音 / 标注文本（留空则移除）",
             addRuby: "添加注音",
             bilingualText: "段落对照译文（留空则移除）",

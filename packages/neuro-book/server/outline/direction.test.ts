@@ -19,9 +19,10 @@ async function setup() {
         await publishPlanningFiles({projectRoot}, change.publish);
         return change;
     };
-    const totalId = (await perform({kind: "create-total", title: "总纲", body: "作品主题"})).entryId!;
-    const planId = (await perform({kind: "create-plan", title: "方案甲"})).planId!;
-    return {projectRoot, totalId, planId, perform};
+    const created = await perform({kind: "create-plan", title: "方案甲"});
+    const planId = created.planId!;
+    const totalId = created.entryId!;
+    return {projectRoot, totalId: totalId!, planId: planId!, perform};
 }
 
 describe("简单方向生成大纲草案", () => {

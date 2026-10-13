@@ -9,8 +9,10 @@ import {MarkdownAlign} from "nbook/app/components/markdown-studio/tiptap/Markdow
 import {MarkdownBilingual} from "nbook/app/components/markdown-studio/tiptap/MarkdownBilingual";
 import {MarkdownCode} from "nbook/app/components/markdown-studio/tiptap/MarkdownCode";
 import {MarkdownParagraph} from "nbook/app/components/markdown-studio/tiptap/MarkdownParagraph";
+import {MarkerParagraph} from "nbook/app/components/markdown-studio/tiptap/MarkerParagraph";
 import {MarkdownRuby} from "nbook/app/components/markdown-studio/tiptap/MarkdownRuby";
 import {MarkdownHighlight, MarkdownSubscript, MarkdownSuperscript, MarkdownTextColor} from "nbook/app/components/markdown-studio/tiptap/MarkdownTextMarks";
+import {OutlineGuidanceAnchor, OutlineReferenceAnchor} from "nbook/app/components/markdown-studio/tiptap/OutlineAnchor";
 
 export interface MarkdownDialectExtensionOptions {
     /** Comment 扩展回调（onSelect / onCommentsChange）；缺省用扩展默认 no-op */
@@ -42,6 +44,9 @@ export function createMarkdownDialectExtensions(options: MarkdownDialectExtensio
         MarkdownParagraph,
         options.comment ? Comment.configure(options.comment) : Comment,
         ForeshadowMarker,
+        OutlineGuidanceAnchor,
+        OutlineReferenceAnchor,
+        MarkerParagraph,
         CommentBlock,
         MarkdownRuby,
         MarkdownBilingual,

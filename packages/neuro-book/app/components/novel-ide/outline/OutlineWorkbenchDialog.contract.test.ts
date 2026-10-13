@@ -31,7 +31,8 @@ function styleVars(source: string): string[] {
     const styles = [...source.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)]
         .map((match) => (match[1] ?? "").replace(/\/\*[\s\S]*?\*\//g, ""))
         .join("\n");
-    return [...styles.matchAll(/--[a-z0-9-]+/g)].map((match) => match[0]);
+    // 前面紧跟字母、数字或连字符的是 BEM 修饰类（如 marker--plant），不是自定义属性。
+    return [...styles.matchAll(/(?<![\w-])--[a-z0-9-]+/g)].map((match) => match[0]);
 }
 
 describe("Outline workbench contract", () => {

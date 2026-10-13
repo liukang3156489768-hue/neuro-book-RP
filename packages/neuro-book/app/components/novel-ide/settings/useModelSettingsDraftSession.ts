@@ -248,11 +248,14 @@ export function useModelSettingsDraftSession(options: DraftSessionOptions) {
     }
 
     /** 收集 Agent Config 中显式模型引用。 */
-    function agentReferences(agent: {profileModelDefaults?: {modelKey?: string | null}; profiles?: Record<string, {model?: {modelKey?: string | null}}>; visibleModels?: Array<{modelKey: string}>} | undefined, path: Array<string | number>, label: string): ModelReferenceInput[] {
+    function agentReferences(agent: {summarizerModelKey?: string | null; profileModelDefaults?: {modelKey?: string | null}; profiles?: Record<string, {model?: {modelKey?: string | null}}>; visibleModels?: Array<{modelKey: string}>} | undefined, path: Array<string | number>, label: string): ModelReferenceInput[] {
         if (!agent) {
             return [];
         }
         const references: ModelReferenceInput[] = [];
+        if (agent.summarizerModelKey) {
+            references.push({modelKey: agent.summarizerModelKey, path: [...path, "summarizerModelKey"], label: `${label} 摘要模型`});
+        }
         if (agent.profileModelDefaults && Object.hasOwn(agent.profileModelDefaults, "modelKey")) {
             references.push({modelKey: agent.profileModelDefaults.modelKey ?? null, path: [...path, "profileModelDefaults", "modelKey"], label: `${label} Profile 默认模型`});
         }
@@ -470,7 +473,8 @@ export function useModelSettingsDraftSession(options: DraftSessionOptions) {
 
     /**
      * 显式复制当前连接。新 Provider 不继承 Secret 或既有引用，用户确认后再单独保存。
-     * 这是修改 ID、Base URL 或代理的唯一设置页入口；Provider Model API 可在原连接上直接修改。
+     * Provider ID 仍需要复制以避免破坏模型引用；复制动作也可用于快速派生连接，
+     * 但 Base URL、代理和 Provider Model API 都可以直接在当前草稿中修改。
      */
     function cloneActiveProviderConnection(): void {
         const provider = activeProvider.value;

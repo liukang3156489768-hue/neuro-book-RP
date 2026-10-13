@@ -11,9 +11,12 @@ const props = withDefaults(defineProps<{
     errors?: ProfileRuntimeSettingsErrors;
     /** 禁用编辑（保存中/加载中/维护动作中） */
     disabled?: boolean;
+    /** 是否显示文件变更通知配置；摘要页只承载摘要与上下文压缩设置。 */
+    showFileChangeNotice?: boolean;
 }>(), {
     errors: () => ({}),
     disabled: false,
+    showFileChangeNotice: true,
 });
 
 const emit = defineEmits<{
@@ -131,7 +134,7 @@ function parseBoolean(value: string): boolean | null {
         </section>
 
         <!-- 文件变更通知 -->
-        <section class="border-t border-[var(--divider)] pt-4">
+        <section v-if="props.showFileChangeNotice" class="border-t border-[var(--divider)] pt-4">
             <h6 class="mb-2.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">{{ t("settings.panels.profileModels.runtime.groups.fileChangeNotice") }}</h6>
             <div class="grid gap-3 md:grid-cols-2">
                 <FormField :label="t('settings.panels.profileModels.runtime.diffMaxChars')" :error="errorLabel('fileChangeDiffMaxChars')" :description="errorLabel('fileChangeDiffMaxChars') ? '' : inheritLabel('fileChangeDiffMaxChars', String(props.inherited.fileChangeNotice.diffMaxChars))">

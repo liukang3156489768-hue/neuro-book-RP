@@ -146,27 +146,28 @@ export function useProviderSettingsBinding(options: ProviderSettingsBindingOptio
     }
 
     /** 只有能力完整的临时候选才能进入 Provider Config。 */
-    function confirmTransientCandidate(): void {
+    function confirmTransientCandidate(): boolean {
         const model = editingModel.value;
         if (!editingTransientCandidate.value || !model) {
-            return;
+            return false;
         }
         try {
             const candidate = buildModelCheckDraft(model);
             const missingFields = requiredModelFields(candidate);
             if (missingFields.length > 0) {
                 notification.error(t("settings.panels.models.transientMissingFields", {fields: missingFields.join(", ")}));
-                return;
+                return false;
             }
             enableModel({...candidate, enabled: true});
         } catch (error) {
             notification.error(error instanceof Error ? error.message : String(error));
-            return;
+            return false;
         }
         editingTransientCandidate.value = false;
         editingModel.value = null;
         modelEditDialogOpen.value = false;
         notification.success(t("settings.panels.models.manualAdded"));
+        return true;
     }
 
     /** 用 Model Library 补齐通用能力，不覆盖 Provider 专属字段。 */
@@ -534,7 +535,13 @@ export function useProviderSettingsBinding(options: ProviderSettingsBindingOptio
         "onConfirm-delete-provider": () => {
             void confirmDeleteActiveProvider();
         },
-        "onConfirm-model-edit": () => confirmTransientCandidate(),
+        "onConfirm-model-edit": () => {
+            if (confirmTransientCandidate()) {
+                // 不完整的远端/手动模型在确认弹窗打开时尚未进入草稿，
+                // 因此发现列表按钮安排的保存已经错过；确认成功必须重新排队写回。
+                scheduleSave();
+            }
+        },
         "onToggle-model-input": (model: ModelSettingsModelDraft, inputKind: ModelInputKind) => toggleModelInput(model, inputKind),
         "onReset-model-input": (model: ModelSettingsModelDraft) => {
             model.input = "";

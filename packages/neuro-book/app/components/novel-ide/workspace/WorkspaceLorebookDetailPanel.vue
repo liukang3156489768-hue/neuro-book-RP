@@ -41,7 +41,15 @@ type LorebookFileDraft = {
     };
     /** 旧内容节点可能保留的废弃 writingTip 字段；仅用于原样写回。 */
     legacyWritingTip?: string | null;
+    /** 表单不编辑、但属于条目来源合同的字段（origin / extraction / ext），保存时原样写回，否则一次保存就会抹掉提取来源。 */
+    preservedFields: Record<string, unknown>;
 };
+
+/**
+ * 灵感提取写入的条目带有 origin / extraction，扩展位 ext 同理；这些字段决定覆盖权限与来源追溯，
+ * 面板不提供编辑入口，所以只做保留而不做解释。新增同类字段时在此登记。
+ */
+const PRESERVED_FRONTMATTER_KEYS = ["origin", "extraction", "ext"] as const;
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 const LOCATION_SUBTYPES = ["world", "continent", "nation", "region", "city", "district", "building", "room", "landmark", "facility", "ruin", "dungeon", "settlement", "transport"];
@@ -218,8 +226,19 @@ function createDraft(node: WorkspaceFileNode, frontmatter: Record<string, unknow
         refs: readRefs(frontmatter.refs),
         retrieval: readRetrieval(frontmatter.retrieval),
         governance: readGovernance(frontmatter.governance),
+        preservedFields: readPreservedFields(frontmatter),
         ...legacyWritingTip,
     };
+}
+
+function readPreservedFields(frontmatter: Record<string, unknown>): Record<string, unknown> {
+    const preserved: Record<string, unknown> = {};
+    for (const key of PRESERVED_FRONTMATTER_KEYS) {
+        if (Object.prototype.hasOwnProperty.call(frontmatter, key)) {
+            preserved[key] = frontmatter[key];
+        }
+    }
+    return preserved;
 }
 
 function renderDraft(draft: LorebookFileDraft): string {
@@ -235,6 +254,7 @@ function renderDraft(draft: LorebookFileDraft): string {
         refs: draft.refs,
         retrieval: draft.retrieval,
         governance: draft.governance,
+        ...draft.preservedFields,
         ...(draft.legacyWritingTip !== undefined ? {writingTip: draft.legacyWritingTip} : {}),
     };
     return `---\n${YAML.stringify(frontmatter).trimEnd()}\n---\n\n${draft.content}`;

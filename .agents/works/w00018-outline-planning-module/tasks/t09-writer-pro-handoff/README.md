@@ -11,7 +11,7 @@ taskId: t09-writer-pro-handoff
 
 ## 当前快照（2026-09-26）
 
-- **仍然有效**：`server/outline/writer-context.ts` 与 `writer-materials.ts` 的只读投影，以及 `read-writer-context` HTTP 路由。
+- **2026-09-29 已被替换**：下列按线路读取的投影与 `read-writer-context` 路由已由 w00019 t01 的按大纲库读取接口取代，仅作历史记录。
   - 投影校验 manifest revision 与线路 version/hash，复用线路资格门禁；
   - 草稿细纲、仅存在于大纲库的条目、未先埋设的回收标记和草稿伏笔定义都不进入交接；
   - 素材按正式条目引用清单按需读取，并返回来源。
@@ -24,7 +24,7 @@ taskId: t09-writer-pro-handoff
 
 ## 下一步
 
-- `writer.pro` 按原始设计 2.1 另行设计和开发，届时接入本只读交接并完成端到端权限验收。
+- 2026-09-29 起，`writer.pro` 由正文写作模块取代，交接改为按大纲库层级读取、不读线路，由 [w00019 t01](../../../w00019-writing-module/tasks/t01-library-based-handoff/README.md) 接手；本 Task 的线路版交接不再推进。
 - 2026-09-26 起只读交接已附带参考文件清单、细纲场景写作指导和 `PENDING_REFERENCE` 告警（见 t07 的 Schema 扩展节）；`writer.pro` 遇到告警不得自行补写相关知识。
 
 ## 合同

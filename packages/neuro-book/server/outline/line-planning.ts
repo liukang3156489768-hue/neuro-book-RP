@@ -108,23 +108,23 @@ export function previewGraphDeletion(snapshot: PlanningSnapshot, target: GraphDe
     return {...base, impactHash: contentHash(JSON.stringify(base))};
 }
 
-export function prepareLineAction(snapshot: PlanningSnapshot, action: LineAction): LineChange {
+export function prepareLineAction(snapshot: PlanningSnapshot, action: LineAction, creationSeed?: string): LineChange {
     switch (action.kind) {
-        case "create-line": return createLine(snapshot, action);
+        case "create-line": return createLine(snapshot, action, creationSeed);
         case "edit-draft-line": return editDraftLine(snapshot, action);
         case "reopen-fixed-line": return reopenFixedLine(snapshot, action);
         case "switch-main-line": return switchMainLine(snapshot, action);
-        default: return applyGraphAction(snapshot, action);
+        default: return applyGraphAction(snapshot, action, creationSeed);
     }
 }
 
-function applyGraphAction(snapshot: PlanningSnapshot, action: Extract<LineAction, GraphCas>): LineChange {
+function applyGraphAction(snapshot: PlanningSnapshot, action: Extract<LineAction, GraphCas>, creationSeed?: string): LineChange {
     const plan = requirePlan(snapshot, action.planId);
     const source = findPlanGraph(snapshot, plan.id);
     if ((source?.value.version ?? 0) !== action.expectedGraphVersion) {
         throw new OutlineLineError("线路图版本已变化，请重新读取", "CAS_CONFLICT");
     }
-    const graph: OutlineGraph = source?.value ?? {schema: "nbook.outline-graph/v1", id: createStableId("gr"),
+    const graph: OutlineGraph = source?.value ?? {schema: "nbook.outline-graph/v1", id: createStableId("gr", creationSeed),
         planId: plan.id, version: 0, nodes: [], edges: []};
     const locks = fixedLineLocks(snapshot, plan.id);
     const nodeOf = (id: OutlineId): OutlineGraphNode => {
@@ -142,7 +142,7 @@ function applyGraphAction(snapshot: PlanningSnapshot, action: Extract<LineAction
         assertCellFree(graph, action.column, action.row);
         const entryId = action.entryId ?? null;
         if (entryId !== null) assertNodeEntry(snapshot, graph, entryId);
-        nodeId = createStableId("nd");
+        nodeId = createStableId("nd", creationSeed);
         nodes = [...nodes, {id: nodeId, entryId, column: action.column, row: action.row}];
     } else if (action.kind === "move-graph-node") {
         const node = nodeOf(action.nodeId);
@@ -177,7 +177,7 @@ function applyGraphAction(snapshot: PlanningSnapshot, action: Extract<LineAction
         const to = nodeOf(action.to);
         if (from.column >= to.column) throw new OutlineLineError("连线只能从小格号节点指向大格号节点");
         if (edges.some((edge) => edge.from === from.id && edge.to === to.id)) throw new OutlineLineError("节点间已存在此连线");
-        edgeId = createStableId("eg");
+        edgeId = createStableId("eg", creationSeed);
         edges = [...edges, {id: edgeId, from: from.id, to: to.id}];
     } else {
         const kind = action.kind === "remove-graph-node" ? "node" : "edge";
@@ -198,11 +198,11 @@ function applyGraphAction(snapshot: PlanningSnapshot, action: Extract<LineAction
     return {planId: plan.id, graphId: next.id, ...(nodeId ? {nodeId} : {}), ...(edgeId ? {edgeId} : {}), publish};
 }
 
-function createLine(snapshot: PlanningSnapshot, action: Extract<LineAction, {kind: "create-line"}>): LineChange {
+function createLine(snapshot: PlanningSnapshot, action: Extract<LineAction, {kind: "create-line"}>, creationSeed?: string): LineChange {
     const plan = requirePlan(snapshot, action.planId);
     const title = requiredTitle(action.title);
     assertLineMembers(snapshot, plan.id, undefined, action.type, action.nodeIds);
-    const id = createStableId("ln");
+    const id = createStableId("ln", creationSeed);
     const line: OutlineLine = {schema: "nbook.outline-line/v3", id, planId: plan.id, version: 0, title,
         type: action.type, fixed: false, nodeIds: [...action.nodeIds]};
     return {planId: plan.id, lineId: id, publish: buildPlanningWrite(snapshot, {lines: [{value: line}]})};

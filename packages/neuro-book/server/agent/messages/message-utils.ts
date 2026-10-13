@@ -216,7 +216,7 @@ export function normalizeToolResultDetails(value: unknown): JsonValue {
             for (const [key, item] of Object.entries(current)) {
                 const normalized = normalize(item, false);
                 if (normalized !== undefined) {
-                    result[key] = normalized;
+                    Object.defineProperty(result, key, {value: normalized, enumerable: true, configurable: true, writable: true});
                 }
             }
             return result;

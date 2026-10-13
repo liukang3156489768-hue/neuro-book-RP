@@ -66,6 +66,16 @@ describe("config normalizer theme", () => {
 });
 
 describe("config normalizer profile runtime", () => {
+    it("全局摘要模型引用会被规范化并进入 effective config", () => {
+        const configured = resolveEffectiveConfig(normalizeGlobalConfig({
+            agent: {summarizerModelKey: "  deepseek/deepseek-flash  "},
+        }), null);
+        expect(configured.agent.summarizerModelKey).toBe("deepseek/deepseek-flash");
+
+        const empty = resolveEffectiveConfig(normalizeGlobalConfig({}), null);
+        expect(empty.agent.summarizerModelKey).toBeNull();
+    });
+
     const globalWithDisabled = normalizeGlobalConfig({
         agent: {
             profiles: {

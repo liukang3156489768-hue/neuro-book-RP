@@ -42,6 +42,7 @@ describe("Automatic Model Discovery frontend session", () => {
 
         await session.discover();
 
+        expect(session.discoveryDialogOpen.value).toBe(true);
         expect(session.discoveryGroups.value.flatMap((group) => group.models.map((model) => model.id))).toEqual(["remote-model"]);
         expect(session.discoveryGroups.value[0]?.models[0]?.state).toBe("enabled");
         expect(notificationSpies.success).toHaveBeenCalledWith("ok");
@@ -63,6 +64,40 @@ describe("Automatic Model Discovery frontend session", () => {
             state: "remote-complete",
             completeModel: {api: "openai-responses"},
         });
+    });
+
+    it("Model Library 没有资料时仍保留远端候选供补全后加入", async () => {
+        const provider = createProvider({models: []});
+        vi.stubGlobal("$fetch", vi.fn(async () => ({
+            models: [remoteModel({reasoning: null, input: null, contextWindowTokens: null, maxTokens: null})],
+            message: "ok",
+            diagnostics: completeDiagnostics(),
+        })));
+        const openTransientCandidate = vi.fn(async () => undefined);
+        const session = useModelDiscoverySession({
+            activeProvider: computed(() => provider),
+            modelLibrary: ref<ModelLibraryDto>({models: []}),
+            loadLibraries: async () => ({models: []}),
+            findLibraryModel: () => null,
+            buildProviderRequest: (value) => ({
+                id: value.id,
+                name: value.name,
+                modelApi: "openai-completions",
+                options: {apiKey: "", baseURL: value.options.baseURL, proxy: "", timeoutMs: null, requestOptions: {}},
+            }),
+            credentialSource: () => "cleared",
+            enableModel: () => undefined,
+            disableModel: () => undefined,
+            openTransientCandidate,
+            ensureDefaultModel: () => undefined,
+        });
+
+        await session.discover();
+        const model = session.discoveryGroups.value[0]?.models[0];
+        expect(model?.state).toBe("remote-incomplete");
+        expect(model?.incompleteCandidate).toMatchObject({id: "remote-model", api: "openai-completions"});
+        session.toggleDiscoveredModel(model!);
+        expect(openTransientCandidate).toHaveBeenCalledWith(expect.objectContaining({id: "remote-model"}));
     });
 
     it("发现请求显式声明凭据来源", async () => {

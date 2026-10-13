@@ -104,6 +104,7 @@ Provider 的测试入口：独立配置 `packages/neuro-book/vitest.real-model.c
 `packages/neuro-book/scripts/smoke/real-model/**`，默认门禁（`bun run --cwd packages/neuro-book test`）显式排除该目录，常规测试零模型调用。
 
 - **凭据**：从仓库根 dotenv（`.env`，含 `.env.local` / `.env.real-model*` 变体）白名单注入测试进程（`DEEPSEEK_API_KEY`，可选 `DEEPSEEK_API_BASE`）；缺凭据的用例 skip 并在证据中记为「未验证」，不得写成通过。`REAL_MODEL_SMOKE_MODEL` 可覆盖模型（默认 `deepseek/deepseek-flash`）。
+- **显式指定已配置 Provider 的酒馆对照**：开发者指定服务商时，`tavern-writer.test.ts` 通过进程环境 `NBOOK_TAVERN_PROVIDER_CONFIG`、`NBOOK_TAVERN_PROVIDER`、`NBOOK_TAVERN_MODEL` 只读指定配置，密钥只在内存用于该连接，不修改用户配置。另需 `NBOOK_TAVERN_SAMPLE` 与 `NBOOK_TAVERN_UPSTREAM_DIR`；未显式启用时 skip。`NBOOK_TAVERN_RESULT` 可指定本地输出位置，结果可含创作正文，不含密钥。该用例仍只由 `test:real-model` 收集；无 dev server 前置。
 - **隔离**：测试使用独立 State Root 与临时 workspace；写入的全局配置只落在本 run 的隔离根内（缺少 `NEURO_BOOK_STATE_ROOT` 时直接拒绝写入），POSIX 下收紧为 0600，随 run teardown 删除。
 - **外部前置**：HTTP 与写作 workflow 用例需要已启动的 dev server（`AGENT_HTTP_BASE_URL`，默认 `http://localhost:3000`），仅网络层不可达时 skip，已监听但接口失败按测试失败暴露；workflow 用例还需 `REAL_MODEL_SMOKE_PROJECT` 与 `REAL_MODEL_SMOKE_CHAPTERS`（缺一即 skip），写盘场景仅在显式设置 `REAL_MODEL_SMOKE_WRITE_CHAPTER` 时执行。
 - **与 smoke CLI 的关系**：`smoke:agent`、`smoke:agent-http`、`smoke:writing-workflow` 面向手工单次执行、失败即退出；测试命令提供统一入口与 skip 语义。两者共用 `packages/neuro-book/scripts/smoke/` 的装配与运行函数。

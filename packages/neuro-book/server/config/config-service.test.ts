@@ -308,23 +308,22 @@ describe("config service", {timeout: 30_000}, () => {
         await expect(fs.readFile(configPath, "utf-8")).resolves.toBe(before);
     });
 
-    it("已保存 Provider 的端点身份变化必须显式复制", async () => {
+    it("已保存 Provider 可以直接修改端点参数", async () => {
         await saveGlobalConfig({models: validModelsInput()}, {workspaceKind: "user-assets"});
         const snapshot = await readConfigEditorSnapshot({workspaceKind: "user-assets"});
         const provider = snapshot.modelSettings.providers[0]!;
         const configPath = path.join(workspaceRoot(), ".nbook", "config.json");
         const before = await fs.readFile(configPath, "utf8");
 
-        await expect(saveGlobalConfig({
+        await saveGlobalConfig({
             models: {
                 default: snapshot.modelSettings.defaultModelKey,
                 providers: [{...provider, options: {...provider.options, baseURL: "https://other.example/v1"}}],
             },
-        }, {workspaceKind: "user-assets"})).rejects.toMatchObject({
-            statusCode: 400,
-            message: expect.stringContaining("连接身份不可修改"),
-        });
-        await expect(fs.readFile(configPath, "utf8")).resolves.toBe(before);
+        }, {workspaceKind: "user-assets"});
+        const after = await fs.readFile(configPath, "utf8");
+        expect(after).not.toBe(before);
+        expect(JSON.parse(after).models.providers[0].options.baseURL).toBe("https://other.example/v1");
     });
 
     it("已保存 Provider 可修改默认接口并保留原 Secret", async () => {
@@ -406,6 +405,7 @@ describe("config service", {timeout: 30_000}, () => {
         const snapshot = await saveGlobalConfig({
             models,
             agent: {
+                summarizerModelKey: modelKey,
                 defaultProfileKey: {novel: null, userAssets: null},
                 profileModelDefaults: {},
                 profileRuntimeDefaults: {},
@@ -415,6 +415,7 @@ describe("config service", {timeout: 30_000}, () => {
         }, {workspaceKind: "user-assets"}, catalog);
 
         expect(snapshot.global.agent?.visibleModels).toEqual([{modelKey, note: "高性能编码"}]);
+        expect(snapshot.global.agent?.summarizerModelKey).toBe(modelKey);
         expect(snapshot.modelSettings.agentVisibleModels).toEqual([{modelKey, note: "高性能编码"}]);
     });
 

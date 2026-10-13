@@ -109,13 +109,15 @@ Code-first 只调整已授权 Task 内的修改顺序，不绕过人类授权、
 | Workbench 命令系统 | [`workbench/commands.md`](workbench/commands.md) | 注册登记、`when` 求值、执行管线、暴露策略与审计；六条首批命令在 Component Lab 闭环，实现与合同测试闭合 |
 | Workbench 快速打开 | [`workbench/quick-open.md`](workbench/quick-open.md) | 单控件两模（命令搜索与行号跳转）、会话 MRU、S4 浮层键盘与焦点交接；实现与 Lab 验收闭合，主页面接入不在本批 |
 | 模型角色与通用模型选择器 | [`ui/model-role-selection.md`](ui/model-role-selection.md) | 梯度轴与专精轴快速选择、通用模型高密度浏览搜索、会话临时覆盖与状态栏联动已由代码与业务集成支持 |
-| Inspiration 设计工作台 | [`ui/inspiration-workbench.md`](ui/inspiration-workbench.md) | 悬浮设计工作台、原创设计、作品分析提取、模板字段解析、聊天草稿恢复与候选审阅保存 |
+| Inspiration 设计工作台 | [`ui/inspiration-workbench.md`](ui/inspiration-workbench.md) | 悬浮设计工作台、原创设计、“作品提取”页签入口（行为见下方两条提取能力）、模板字段解析、原创聊天草稿恢复与候选审阅保存 |
+| 角色管理工作区 | [`ui/character-management.md`](ui/character-management.md) | `ui.character-management`；当前项目 `lorebook/character/` 文件唯一来源、稳定 ID 三栏角色管理、原作只读、按方案隔离改编资料、头像、保存冲突与离开守卫已实现 |
 
 ## 待实现规范
 以下已获批准但尚未实现的目标合同必须在代码切换前满足；实现和验证闭合后原地晋升为 `implemented`。
 
 | 功能域 | 当前规范 | 缺口 |
 |---|---|---|
+| 写手酒馆预设兼容 | [writing/tavern-preset-compatibility.md](writing/tavern-preset-compatibility.md) | 样本开发已授权，legacy 文本与 strict 子集有对照；参数采用、编辑入口、扩展与真实产出待验证 |
 | Agent Session Store 租约 | [`agent/session-store-lease.md`](agent/session-store-lease.md) | proper-lockfile 租约互斥、mtime 心跳、失效与 Windows 文件系统兼容目标；修复验证闭合前保持 `planned` |
 | 资源生命周期 | [`runtime/lifecycle.md`](runtime/lifecycle.md) | `runtime.lifecycle`；作用域、资源owner、取消与关闭失败；第一切片目标，尚未实现 |
 | 显式服务装配 | [`runtime/services.md`](runtime/services.md) | `runtime.services`；唯一provider、依赖与寿命检查、并发初始化与失败稳定；第一切片目标 |
@@ -125,16 +127,26 @@ Code-first 只调整已授权 Task 内的修改顺序，不绕过人类授权、
 | 平台文件 | [`platform/files.md`](platform/files.md) | `platform.files`；受根约束I/O、watch/锁与owner；不是业务文件树服务；第二切片真实服务 |
 | SQLite机制 | [`platform/sqlite.md`](platform/sqlite.md) | `platform.sqlite`；具名资源owner、连接借用、单库事务与关闭；不自动迁移；第二切片真实服务 |
 | Agent Profile 设置视图 | [`ui/agent-profile-settings.md`](ui/agent-profile-settings.md) | 常用设置优先的受控 Profile 设置视图；实现与 Lab 验证闭合后晋升 implemented |
+| 全局提示词管理 | [`ui/prompt-management.md`](ui/prompt-management.md) | `ui.prompt-management`；设计、提取、规划与写作的内置只读预设、自定义消息、全局持久化和会话/任务版本继承已实现，Mock 与正式组件隔离浏览器验证通过，待开发者验收后晋升 |
 | Workbench 外壳接入 | [`ui/workbench-shell.md`](ui/workbench-shell.md) | 含 Editor/工具容器层级与拖拽行为表；2026-09-22 新拖放合同已接入模型和宿主，验收见关联 Task 最新实施记录；规格晋升仍待正式审批 |
 | Storage 架构边界 | [`storage/boundaries.md`](storage/boundaries.md) | Config / Storage / 内存 / 领域数据职责、user/project 归属、插件与 grid 消费边界 |
 | Storage 本地持久化 | [`storage/persistence.md`](storage/persistence.md) | 身份与客户端分区、条件读写、生命周期、恢复、备份与首批迁移；运行时与验收尚未实现 |
 | 工作台与插件嵌套 grid | [`ui/nested-grid.md`](ui/nested-grid.md) | 二维原语、原子手势、共享测量/宿主、scope仲裁与绝对指针跟随；新矩阵未闭合前保持planned |
-| 大纲库与细纲 | [`outline/planning-library.md`](outline/planning-library.md) | `outline.planning-library`；总纲/卷纲/章节大纲、细纲、方案引用、写时分叉和正式采用；尚未实现 |
+| 大纲库与细纲 | [`outline/planning-library.md`](outline/planning-library.md) | `outline.planning-library`；总纲/卷纲/章节大纲、细纲、方案引用、写时分叉和正式采用；尚未实现。2026-10-02 起总纲改为每方案一个（手动关联共享），新增细纲“来源提取”采用依据，见 [w00020](../../.agents/works/w00020-inspiration-extraction-pipeline/README.md) |
+| 大纲条目模板 | [`outline/outline-entry-templates.md`](outline/outline-entry-templates.md) | `outline.entry-templates`；四层正文模板、细纲结构及可选地点/角色资料/服饰字段；模板与解析已接入，真实生成效果待验收，维持 planned |
+| 作品大纲提取 | [`inspiration/outline-extraction.md`](inspiration/outline-extraction.md) | `inspiration.outline-extraction`；章节识别与划卷、自下而上提取到提取方案、后台进度与单章重试、重提取去向；服务端、路由、Agent 工具与界面已实现，Mock 验收通过，真实模型验收待开发者授权，保持 planned |
+| 作品素材提取 | [`inspiration/material-extraction.md`](inspiration/material-extraction.md) | `inspiration.material-extraction`；九类素材、实体型/文档型/逐条收录三种模式、校验重试、归类与整合、审阅写入 `lorebook/` 并标记来源；服务端、路由、Agent 工具与界面已实现，Mock 验收通过，真实模型验收待开发者授权，保持 planned |
+| 素材设计改编 | [`inspiration/design-adaptation.md`](inspiration/design-adaptation.md) | `inspiration.design-adaptation`；显式参考读取、来源快照与改编草稿、确认另存新素材已实现，Mock 回归通过，真实模型效果未验收，保持 planned |
 | 伏笔库与标记派生 | [`outline/foreshadowing.md`](outline/foreshadowing.md) | `outline.foreshadowing`；四状态、正式大纲标记、来源追溯和异常；尚未实现 |
 | 线路规划 | [`outline/line-planning.md`](outline/line-planning.md) | `outline.line-planning`；节点图、主线/支线/角色线/IF 线、顺序、重复和冲突门禁；尚未实现 |
 | 大纲规划 Agent | [`outline/agent-assistance.md`](outline/agent-assistance.md) | `outline.agent-assistance`；讨论/自动模式、审批、批量确认、撤销、审计和流式输出；尚未实现 |
+| 规划素材运用与改编 | [`outline/material-adaptation.md`](outline/material-adaptation.md) | `outline.material-adaptation`；按需素材读取、基础资料只读、方案独立改编记录与稳定来源章节锚点；planned |
 | 大纲规划工作台 UI | [`outline/workbench-ui.md`](outline/workbench-ui.md) | `outline.workbench-ui`；全屏左右分栏、可拖拽宽度、项目布局持久化和三段式视图；尚未实现 |
-| `writer.pro` 规划交接 | [`outline/writer-handoff.md`](outline/writer-handoff.md) | `outline.writer-handoff`；只读正式固定线路，拒绝草稿、失效和重复节点；尚未实现 |
+| 正文写作规划交接 | [`outline/writer-handoff.md`](outline/writer-handoff.md) | `outline.writer-handoff`；按写作方案的大纲库层级只读返回章节目录与正式上下文，不读取线路；查询与消费方（正文写作模块）已实现，示例项目验收通过 |
+| 写作界面 | [`writing/workspace-ui.md`](writing/workspace-ui.md) | `writing.workspace-ui`；左栏大纲视图、中间内容显示、右栏按章写作会话、进度卡片与运行期只读；已实现，组件测试、浏览器（含 390px 与深浅主题）和真实模型 Smoke 已验收；待开发者确认后提升状态 |
+| 正文与规划绑定 | [`writing/prose-binding.md`](writing/prose-binding.md) | `writing.prose-binding`；写作方案、正文文件位置、文件头依据记录与章节写作状态；服务端绑定、状态派生、接口与界面已实现，示例项目验收通过；正常归属正文的界面解除入口待决 |
+| 助手与作家系统 | [`writing/collaboration.md`](writing/collaboration.md) | `writing.collaboration`；主创/助手/写手权限、字段分工、四份固定结构、场景循环、改写、文风文件与字数口径；程序字段、四份结构的校验和渲染、整章写作工作流与运行记录、局部改写工作流、三个角色 Profile 与主创、助手工具、进度投影与 HTTP 运行接口、章节会话、进度卡片已实现，Mock 与真实模型（DeepSeek）验收通过；讨论模式与问题登记未经真实模型验证 |
+| 写作问题回流 | [`writing/issue-feedback.md`](writing/issue-feedback.md) | `writing.issue-feedback`；阻断与提示分级、登记、徽标跳转、待复核与忽略；问题存储、状态派生、查询与忽略、写作工作流中的登记与复核、徽标与跳转界面已实现；跳转只定位到条目；真实运行未登记问题，徽标未在浏览器中触发 |
 
 ## 冻结过渡规范
 
@@ -178,5 +190,4 @@ Code-first 只调整已授权 Task 内的修改顺序，不绕过人类授权、
 `bun run docs:check` 只负责确定性结构：元数据、模板占位、必需章节的实义内容、成熟度登记、capability 精确唯一、implemented 证据的「实现入口／合同测试／Smoke」三条标签行及链接类型和活跃相对链接。它不判断自然语言是否互相矛盾、owner 是否真实、两个近义 capability 是否重叠，也不推断代码 diff 是否改变行为。current Work/Task 快照与受管组件文档缺失分别进入 `warnings` 与 `failures`：Task 正文只供协作参考，组件文档缺失阻断发布文档门禁。
 
 Reviewer 必须核对每项输入、输出、状态、副作用和失败语义没有冲突；`planned` 没有泄漏实现步骤且具有真实批准依据；`implemented` 的代码、测试和 smoke 证据覆盖正文；Task 和 PR 链接具体 Spec 或明确说明行为合同未变。两层都通过才算完成。
-
 

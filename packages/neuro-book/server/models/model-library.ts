@@ -6,6 +6,7 @@ import {
     type ModelLibraryEntryDto,
 } from "nbook/shared/dto/app-settings.dto";
 import {isSupportedPiApi} from "@notnotype/neuro-book-contracts/provider-config";
+import {MODEL_LIBRARY_SUPPLEMENT} from "nbook/server/models/model-library-supplement";
 
 const PROVIDER_SOURCE_PRIORITY = [
     "anthropic", "openai", "google", "deepseek", "xai", "xiaomi", "mistral", "minimax", "minimax-cn",
@@ -41,11 +42,15 @@ function buildLibrary(): ModelLibraryDto {
         }
     }
 
-    return {
-        models: [...candidates.entries()]
-            .map(([modelId, entries]) => buildEntry(modelId, entries.sort(compareSource)))
-            .sort((left, right) => left.id.localeCompare(right.id)),
-    };
+    const models = new Map([...candidates.entries()]
+        .map(([modelId, entries]) => [modelId, buildEntry(modelId, entries.sort(compareSource))]));
+    for (const model of MODEL_LIBRARY_SUPPLEMENT) {
+        // SDK 升级后由 SDK 接管同 ID 资料，避免本地快照长期遮蔽上游修正。
+        if (!models.has(model.id)) {
+            models.set(model.id, model);
+        }
+    }
+    return {models: [...models.values()].sort((left, right) => left.id.localeCompare(right.id))};
 }
 
 function buildEntry(modelId: string, entries: Array<{providerId: string; model: Model<Api>}>): ModelLibraryEntryDto {

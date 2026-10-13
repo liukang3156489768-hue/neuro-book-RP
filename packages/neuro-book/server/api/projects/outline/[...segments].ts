@@ -4,13 +4,13 @@ import {requireProjectRefQuery} from "nbook/server/api/projects/project-control-
 import {withProjectHttpError} from "nbook/server/api/projects/project-http-error";
 import {validateBody} from "nbook/server/utils/novel-chapter";
 import {requireActiveReadyProject, runReadyProjectOperation} from "nbook/server/workspace-files/project-session";
-import {FORESHADOW_MARKER_PARSER_VERSION, OutlineFormatError, type OutlineId} from "nbook/server/outline/format";
+import {FORESHADOW_MARKER_PARSER_VERSION, OutlineFormatError, stableId, type OutlineId} from "nbook/server/outline/format";
 import {readForeshadowingSnapshot, readPlanningSnapshot} from "nbook/server/outline";
 import {getLibraryTrees, OutlineLibraryError} from "nbook/server/outline/library";
 import {OutlineLineError} from "nbook/server/outline/line-planning";
 import {deriveForeshadowingElapsed, deriveForeshadowingStates} from "nbook/server/outline/foreshadowing";
 import {OutlineGenerationError} from "nbook/server/outline/direction";
-import {adoptReadyDetail, analyzeReadyDetail, analyzeReadyLine, fixReadyLine, inspectReadyLine, readReadyFixedLineNodes, readReadyWriterOutlineContext, applyReadyForeshadowingAction, applyReadyLibraryAction, applyReadyLineAction, forkReadyLibraryEntry, generateReadyDirectionDraft, openReadyPlanning, previewReadyForeshadowingMarkerRepair, previewReadyGraphDeletion, previewReadyPlanningObjectDeletion, previewReadyPlanningPlacementRemoval, previewReadyPlanningPlanRemoval, publishReadyPlanningFiles, repairReadyForeshadowingMarker, repairReadyMissingEntry, removeReadyPlanningObject, removeReadyPlanningPlacement, removeReadyPlanningPlan, undoReadyPlanningFiles} from "nbook/server/outline/host";
+import {adoptReadyDetail, analyzeReadyDetail, analyzeReadyLine, fixReadyLine, inspectReadyLine, readReadyFixedLineNodes, readReadyWriterChapterContext, readReadyWriterChapterDirectory, applyReadyForeshadowingAction, applyReadyLibraryAction, applyReadyLineAction, forkReadyLibraryEntry, generateReadyDirectionDraft, openReadyPlanning, previewReadyForeshadowingMarkerRepair, previewReadyGraphDeletion, previewReadyPlanningObjectDeletion, previewReadyPlanningPlacementRemoval, previewReadyPlanningPlanRemoval, publishReadyPlanningFiles, repairReadyForeshadowingMarker, repairReadyMissingEntry, removeReadyPlanningObject, removeReadyPlanningPlacement, removeReadyPlanningPlan, undoReadyPlanningFiles} from "nbook/server/outline/host";
 import {OutlineTransactionError} from "nbook/server/outline/transaction";
 
 const PublishBody = z.object({
@@ -39,6 +39,15 @@ const ForeshadowId = z.string().regex(/^fo-[a-z0-9][a-z0-9-]*$/u);
 // 形状在此收窄，路径合法性、待补缺省路径等语义仍由 frontmatter parser 在候选快照中统一校验。
 const OutlineReferenceBody = z.object({path: z.string().min(1).optional(), locator: z.string().trim().min(1).optional(),
     purpose: z.string().trim().min(1).optional(), pending: z.boolean().optional()}).strict();
+const AdaptationEntryId = EntryId.transform(value => stableId(value, "adaptation.entryId", "ol"));
+const AdaptationBody = z.discriminatedUnion("kind", [
+    z.object({kind: z.literal("chapter"), sourcePlanId: z.string().min(1), sourceEntryId: AdaptationEntryId}).strict(),
+    z.object({kind: z.literal("between"), sourcePlanId: z.string().min(1), beforeEntryId: AdaptationEntryId, afterEntryId: AdaptationEntryId}).strict(),
+]);
+const MaterialUpdatesBody = z.array(z.object({
+    materialPath: z.string().min(1), kind: z.enum(["experience", "relationship", "item", "location"]),
+    body: z.string().trim().min(1),
+}).strict()).max(64);
 const ForeshadowDesignFields = {
     surface: z.string().trim().min(1), connection: z.string().trim().min(1),
     plant: z.object({situation: z.string().trim().min(1), presentation: z.string().trim().min(1), subtlety: z.string().trim().min(1)}).strict(),
@@ -63,6 +72,7 @@ const ForeshadowingMarkerRepairBody = z.object({
     expectedRevision: z.number().int().nonnegative(), planId: z.string().trim().min(1), entryId: EntryId,
     foreshadowingId: ForeshadowId, expectedVersion: z.number().int().nonnegative(),
     expectedContentHash: z.string().regex(/^sha256:[0-9a-f]{64}$/u), body: z.string(),
+    materialUpdates: MaterialUpdatesBody.nullable().optional(),
 }).strict();
 const LineId = z.string().regex(/^ln-[a-z0-9][a-z0-9-]*$/u);
 const NodeId = z.string().regex(/^nd-[a-z0-9][a-z0-9-]*$/u);
@@ -102,19 +112,23 @@ const LineBody = z.object({
 const LibraryBody = z.object({
     expectedRevision: z.number().int().nonnegative(),
     action: z.discriminatedUnion("kind", [
-        z.object({kind: z.literal("create-total"), title: z.string().min(1), body: z.string()}).strict(),
         z.object({kind: z.literal("create-plan"), title: z.string().min(1)}).strict(),
+        z.object({kind: z.literal("associate-total"), planId: z.string().min(1), totalId: EntryId, confirmReplace: z.literal(true).optional()}).strict(),
+        z.object({kind: z.literal("unshare-total"), planId: z.string().min(1)}).strict(),
         z.object({kind: z.literal("rename-plan"), planId: z.string().min(1), title: z.string().min(1)}).strict(),
         z.object({kind: z.literal("create-entry"), planId: z.string().min(1), parentId: EntryId,
             entryKind: z.enum(["volume", "chapter", "detail"]), title: z.string().min(1), body: z.string(),
             materialRefs: z.array(z.string()).optional(), writingGuidance: z.string().optional(),
-            references: z.array(OutlineReferenceBody).max(64).optional(), targetWords: z.number().int().positive().optional()}).strict(),
+            adaptation: AdaptationBody.optional(), materialUpdates: MaterialUpdatesBody.optional(),
+            references: z.array(OutlineReferenceBody).max(64).optional(), targetWords: z.number().int().positive().optional(),
+}).strict(),
         z.object({kind: z.literal("adopt-entry"), planId: z.string().min(1), entryId: EntryId,
             expectedVersion: z.number().int().nonnegative(), expectedContentHash: z.string().regex(/^sha256:[0-9a-f]{64}$/u)}).strict(),
         z.object({kind: z.literal("edit-entry"), planId: z.string().min(1), entryId: EntryId,
             expectedVersion: z.number().int().nonnegative(), expectedContentHash: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
-            title: z.string().min(1), body: z.string(), confirmGlobal: z.literal(true).optional(),
+            title: z.string().min(1), body: z.string(),
             materialRefs: z.array(z.string()).nullable().optional(), writingGuidance: z.string().nullable().optional(),
+            adaptation: AdaptationBody.nullable().optional(), materialUpdates: MaterialUpdatesBody.nullable().optional(),
             references: z.array(OutlineReferenceBody).max(64).nullable().optional(), targetWords: z.number().int().positive().nullable().optional()}).strict(),
         z.object({kind: z.literal("move-entry"), planId: z.string().min(1), entryId: EntryId, parentId: EntryId,
             expectedVersion: z.number().int().nonnegative(), expectedContentHash: z.string().regex(/^sha256:[0-9a-f]{64}$/u)}).strict(),
@@ -132,7 +146,13 @@ const LineAnalysisBody = z.object({
     lineId: LineId, expectedRevision: z.number().int().nonnegative(),
     expectedVersion: z.number().int().nonnegative(), expectedContentHash: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
 }).strict();
-const WriterContextBody = LineAnalysisBody.extend({
+const WriterChaptersBody = z.object({planId: PlanId}).strict();
+const WriterChapterBasisBody = z.object({
+    chapterVersion: z.number().int().nonnegative(), chapterContentHash: Sha256,
+    details: z.array(z.object({entryId: EntryId, version: z.number().int().nonnegative(), contentHash: Sha256}).strict()),
+}).strict();
+const WriterChapterContextBody = z.object({
+    planId: PlanId, chapterEntryId: EntryId, expectedBasis: WriterChapterBasisBody.optional(),
     materialPaths: z.array(z.string().min(1)).min(1).max(8).refine((paths) => new Set(paths).size === paths.length,
         "materialPaths 不能包含重复路径").optional(),
 }).strict();
@@ -157,6 +177,7 @@ const DirectionBody = z.object({
 const ForkBody = z.object({planId: z.string().min(1), sourceId: EntryId, title: z.string().min(1), body: z.string(),
     expectedRevision: z.number().int().nonnegative(), confirmShared: z.literal(true),
     materialRefs: z.array(z.string()).nullable().optional(), writingGuidance: z.string().nullable().optional(),
+    adaptation: AdaptationBody.nullable().optional(), materialUpdates: MaterialUpdatesBody.nullable().optional(),
     references: z.array(OutlineReferenceBody).max(64).nullable().optional(), targetWords: z.number().int().positive().nullable().optional()}).strict();
 /** 存储数据面只接受已打开 Project；规范内容始终从文件重新解析。 */
 export default defineEventHandler((event) => withProjectHttpError(async () => {
@@ -243,12 +264,17 @@ export default defineEventHandler((event) => withProjectHttpError(async () => {
             const input = await validateBody(event, LineAnalysisBody);
             return await readReadyFixedLineNodes(ready, {...input, lineId: input.lineId as OutlineId});
         }
-        if (event.method === "POST" && segments.length === 1 && segments[0] === "read-writer-context") {
-            const {materialPaths, ...input} = await validateBody(event, WriterContextBody);
-            const request = {...input, lineId: input.lineId as OutlineId};
+        if (event.method === "POST" && segments.length === 1 && segments[0] === "read-writer-chapters") {
+            return await readReadyWriterChapterDirectory(ready, await validateBody(event, WriterChaptersBody));
+        }
+        if (event.method === "POST" && segments.length === 1 && segments[0] === "read-writer-chapter-context") {
+            const {materialPaths, expectedBasis, ...input} = await validateBody(event, WriterChapterContextBody);
+            const request = {...input, chapterEntryId: input.chapterEntryId as OutlineId,
+                ...(expectedBasis === undefined ? {} : {expectedBasis: {...expectedBasis,
+                    details: expectedBasis.details.map((detail) => ({...detail, entryId: detail.entryId as OutlineId}))}})};
             return materialPaths === undefined
-                ? await readReadyWriterOutlineContext(ready, request)
-                : await readReadyWriterOutlineContext(ready, request, materialPaths);
+                ? await readReadyWriterChapterContext(ready, request)
+                : await readReadyWriterChapterContext(ready, request, materialPaths);
         }
         if (event.method === "POST" && segments.length === 1 && segments[0] === "analyze-line") {
             const input = await validateBody(event, LineAnalysisBody);

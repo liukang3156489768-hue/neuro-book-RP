@@ -27,10 +27,9 @@ const definition: Foreshadowing = {
 };
 const snapshot = {
     manifest: {
-        schema: "nbook.outline/v1",
+        schema: "nbook.outline/v3",
         revision: 7,
-        totalId: null,
-        plans: [{id: "plan-main", title: "主方案", placements: [{entryId: entry.id, parentId: "ol-root", position: 0}]}],
+        plans: [{id: "plan-main", title: "主方案", totalId: "ol-root", placements: [{entryId: entry.id, parentId: "ol-root", position: 0}]}],
         entries: [{id: entry.id, path: entryPath, version: entry.version, contentHash: contentHash(serializeEntryMarkdown(entry))}],
         foreshadowing: [{id: definition.id, path: "outline/foreshadowing/clue--fo-clue.md", version: definition.version, contentHash: contentHash(serializeForeshadowingMarkdown(definition))}],
         lines: [],

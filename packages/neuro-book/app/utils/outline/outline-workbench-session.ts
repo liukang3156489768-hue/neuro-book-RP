@@ -19,6 +19,7 @@ import {
 import {
     defineOutlineWorkbenchState,
     OUTLINE_WORKBENCH_DEFAULT_TEMPERATURE,
+    type OutlineWorkbenchCreationMode,
     type OutlineWorkbenchMode,
     type OutlineWorkbenchRecord,
     type OutlineWorkbenchView,
@@ -31,10 +32,13 @@ export type OutlineWorkbenchPatch = {
     readonly modelKey?: string;
     readonly temperature?: number;
     readonly mode?: OutlineWorkbenchMode;
+    readonly creationMode?: OutlineWorkbenchCreationMode;
     readonly activeSessionId?: number | null;
     readonly sessions?: readonly Readonly<{
         sessionId: number;
         title?: string;
+        creationMode?: OutlineWorkbenchCreationMode;
+        started?: boolean;
         createdAt: number;
         lastActiveAt: number;
     }>[];
@@ -54,10 +58,13 @@ export type OutlineWorkbenchResolvedState = {
     readonly modelKey: string | null;
     readonly temperature: number;
     readonly mode: OutlineWorkbenchMode;
+    readonly creationMode: OutlineWorkbenchCreationMode;
     readonly activeSessionId: number | null;
     readonly sessions: readonly Readonly<{
         sessionId: number;
         title?: string;
+        creationMode?: OutlineWorkbenchCreationMode;
+        started?: boolean;
         createdAt: number;
         lastActiveAt: number;
     }>[];
@@ -93,6 +100,7 @@ function patchFields(patch: OutlineWorkbenchPatch): OutlineWorkbenchPatch {
         ...(typeof patch.temperature === "number" && Number.isFinite(patch.temperature)
             ? {temperature: Math.min(2, Math.max(0, Number(patch.temperature.toFixed(1))))} : {}),
         ...(patch.mode === "discuss" || patch.mode === "auto" ? {mode: patch.mode} : {}),
+        ...(patch.creationMode === "original" || patch.creationMode === "adaptation" ? {creationMode: patch.creationMode} : {}),
         ...(patch.activeSessionId !== undefined ? {activeSessionId: patch.activeSessionId} : {}),
         ...(Array.isArray(patch.sessions) ? {sessions: patch.sessions} : {}),
     };
@@ -114,6 +122,7 @@ const DEFAULT_STATE: OutlineWorkbenchResolvedState = {
     modelKey: null,
     temperature: OUTLINE_WORKBENCH_DEFAULT_TEMPERATURE,
     mode: "discuss",
+    creationMode: "original",
     activeSessionId: null,
     sessions: [],
 };
@@ -126,6 +135,7 @@ function resolveState(value: OutlineWorkbenchRecord): OutlineWorkbenchResolvedSt
         modelKey: value.modelKey ?? DEFAULT_STATE.modelKey,
         temperature: value.temperature ?? DEFAULT_STATE.temperature,
         mode: value.mode ?? DEFAULT_STATE.mode,
+        creationMode: value.creationMode ?? DEFAULT_STATE.creationMode,
         activeSessionId: value.activeSessionId ?? DEFAULT_STATE.activeSessionId,
         sessions: value.sessions ?? DEFAULT_STATE.sessions,
     };

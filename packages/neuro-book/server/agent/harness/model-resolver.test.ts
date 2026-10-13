@@ -1,9 +1,21 @@
 import {describe, expect, it} from "vitest";
-import {resolvePiApiKeyForModelFromConfig, resolvePiModelFromConfig} from "nbook/server/agent/harness/model-resolver";
+import {configuredProfileModel, resolvePiApiKeyForModelFromConfig, resolvePiModelFromConfig} from "nbook/server/agent/harness/model-resolver";
 import {createDefaultEffectiveConfig} from "nbook/server/config/normalizer";
 import type {EffectiveConfig} from "nbook/server/config/types";
 
 describe("model resolver", () => {
+    it("独立资料审核沿用助手配置，显式审核配置优先", () => {
+        const config = createConfig();
+        config.agent.profiles["writing.assistant"] = {...config.agent.profiles["writing.assistant"],
+            settings: {},
+            model: {...config.agent.profileModelDefaults, modelKey: "local-openai/test-model", reasoningEffort: "high", temperature: 0.6}};
+        expect(configuredProfileModel(config, "writing.material-review")).toMatchObject({reasoningEffort: "high", temperature: 0.6});
+        expect(resolvePiModelFromConfig(config, "writing.material-review").id).toBe("test-model");
+        config.agent.profiles["writing.material-review"] = {...config.agent.profiles["writing.assistant"],
+            settings: {},
+            model: {...config.agent.profileModelDefaults, reasoningEffort: "off", temperature: 0.2}};
+        expect(configuredProfileModel(config, "writing.material-review")).toMatchObject({reasoningEffort: "off", temperature: 0.2});
+    });
     it("按 providerConfigId + model.id 从当前 effective config 解析完整模型", () => {
         const config = createConfig();
         const model = resolvePiModelFromConfig(config, "leader.default");

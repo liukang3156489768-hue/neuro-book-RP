@@ -27,7 +27,7 @@ const lines: OutlineWorkbenchLine[] = [
     {...line("ln-fixed", "角色线丙", "character", true, ["nd-d", "nd-e"]), analysis: {summary: "线路一致", conflicts: [], resolutions: []}},
 ];
 const snapshot: OutlineWorkbenchSnapshot = {
-    manifest: {revision: 5, totalId: "ol-total", plans: [{id: "plan-a", title: "方案甲", placements: entries.map(({id}, position) => ({entryId: id, parentId: null, position}))}]},
+    manifest: {revision: 5, plans: [{id: "plan-a", title: "方案甲", totalId: "ol-total", placements: entries.map(({id}, position) => ({entryId: id, parentId: null, position}))}]},
     entries: entries.map((value, index) => ({path: `outline/entries/${value.id}.md`, contentHash: hash(String(index)), value})),
     foreshadowing: [],
     graphs: [{path: "outline/graphs/fang-an-jia--gr-a.yaml", contentHash: hash("g"), value: graph}],

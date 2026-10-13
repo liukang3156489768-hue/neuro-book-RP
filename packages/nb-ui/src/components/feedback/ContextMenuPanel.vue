@@ -45,14 +45,18 @@ function itemClass(item: ContextMenuItem): string {
                 @hover="(item, trigger, immediate) => cascade.schedule(item, trigger, 0, immediate, Boolean(item?.children?.length))"
             />
         </div>
+        <Teleport to="body">
         <div
             v-for="(level, depth) in cascade.levels.value"
             :key="depth"
             :ref="(element) => cascade.setPanel(depth, element)"
+            data-menu-panel
             role="menu"
             class="nb-ui-popover-surface nb-ui-menu-surface nb-menu-level fixed overflow-hidden p-1.5"
             :data-switching="level.switching"
             :style="{...level.style, zIndex: NB_Z_INDEX.contextMenu + props.depth + depth + 1}"
+            @click.stop
+            @contextmenu.prevent
         >
             <div class="nb-menu-level-content">
                 <MenuNodes
@@ -64,5 +68,6 @@ function itemClass(item: ContextMenuItem): string {
                 />
             </div>
         </div>
+        </Teleport>
     </div>
 </template>

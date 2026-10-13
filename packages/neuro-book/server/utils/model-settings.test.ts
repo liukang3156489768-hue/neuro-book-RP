@@ -124,6 +124,32 @@ describe("provider/model Pi checks", () => {
         expect(result.message).toContain("Pi 检查通过");
     });
 
+    it("连接检查不把已配置的推理能力转换成 disabled 参数", async () => {
+        const faux = createFauxModels({
+            provider: "faux-connectivity",
+            api: "openai-completions",
+            models: [{id: "faux-fast"}],
+        });
+        faux.setResponses([fauxAssistantMessage(fauxText("ok"))]);
+        let observedReasoning: boolean | undefined;
+        const result = await checkModelHealth(createProviderDraft({
+            id: "faux-connectivity",
+            name: "Faux Connectivity",
+            modelApi: "openai-completions",
+        }), createModelDraft({
+            id: "faux-fast",
+            reasoning: true,
+        }), {
+            runtimeResolver: (_provider, _draft, model) => {
+                observedReasoning = model.reasoning;
+                return faux.runtime;
+            },
+        });
+
+        expect(result.success).toBe(true);
+        expect(observedReasoning).toBe(false);
+    });
+
     it("model check 收到已取消 signal 时不进入 Pi stream", async () => {
         const controller = new AbortController();
         controller.abort();

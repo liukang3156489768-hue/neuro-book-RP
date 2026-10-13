@@ -1,35 +1,19 @@
 import {contentHash, parseManifest, serializeEntryMarkdown, serializeLineYaml, serializeManifest, type OutlineId} from "./format";
 import type {PlanningPublishInput, PlanningSnapshot} from "./index";
 import {draftOf, lineEntryIds} from "./line-planning";
+import {detailReviewScope} from "./detail-analysis";
 
-/** 规划上下文变动时，同方案已采用细纲不能保留依赖旧报告的正式状态。 */
+/**
+ * 已采用细纲的上游链（见 detailReviewScope）变化时，在同一批次撤回为草稿并清除报告。
+ * 同章其他细纲、其他章节、方案标题与排序的变化不撤回，否则同方案只能保留一份已审阅细纲。
+ */
 export function invalidateDependentDetails(snapshot: PlanningSnapshot, input: PlanningPublishInput): PlanningPublishInput {
     const manifestMutation = input.mutations.find(({relativePath}) => relativePath === "outline/manifest.yaml");
     if (!manifestMutation?.content) return input;
     const next = parseManifest(manifestMutation.content);
-    const changedEntries = new Set<OutlineId>();
     const editedPaths = new Set(input.mutations.map(({relativePath}) => relativePath));
+    const changedEntries = new Set<OutlineId>();
     for (const entry of snapshot.entries) if (editedPaths.has(entry.path)) changedEntries.add(entry.value.id);
-    const touchedPlans = new Set<string>();
-    for (const plan of snapshot.manifest.plans) {
-        const updated = next.plans.find(({id}) => id === plan.id);
-        if (!updated || JSON.stringify(plan) !== JSON.stringify(updated)
-            || plan.placements.some(({entryId}) => changedEntries.has(entryId))) touchedPlans.add(plan.id);
-    }
-    for (const plan of next.plans) {
-        if (plan.placements.some(({entryId}) => changedEntries.has(entryId))) touchedPlans.add(plan.id);
-    }
-    if (touchedPlans.size === 0) return input;
-    const affected = new Set<OutlineId>();
-    for (const plan of snapshot.manifest.plans) {
-        if (!touchedPlans.has(plan.id)) continue;
-        for (const placement of plan.placements) affected.add(placement.entryId);
-    }
-    // 新挂载的已采用细纲不在旧方案快照中，仍必须撤回原方案分析报告。
-    for (const plan of next.plans) {
-        if (!touchedPlans.has(plan.id)) continue;
-        for (const placement of plan.placements) affected.add(placement.entryId);
-    }
     const previousPlacements = new Map(snapshot.manifest.plans.map((plan) =>
         [plan.id, new Set(plan.placements.map(({entryId}) => entryId))] as const));
     const newlyAttached = new Set<OutlineId>();
@@ -39,10 +23,16 @@ export function invalidateDependentDetails(snapshot: PlanningSnapshot, input: Pl
     const extra = [];
     const replacements = new Map<OutlineId, {version: number; contentHash: string}>();
     for (const entry of snapshot.entries) {
-        if (!affected.has(entry.value.id) || editedPaths.has(entry.path)
-            || entry.value.kind !== "detail" || entry.value.status !== "adopted") continue;
+        if (editedPaths.has(entry.path) || entry.value.kind !== "detail" || entry.value.status !== "adopted") continue;
+        // 来源提取细纲的依据是原文引用，不随上游链变化；用户编辑它时 editEntry 已清除 basis。
+        if (entry.value.basis) continue;
+        const planId = entry.value.analysis?.planId ?? "";
+        const before = detailReviewScope(snapshot.manifest, planId, entry.value.id);
+        const after = detailReviewScope(next, planId, entry.value.id);
         // 报告仅绑定签发方案；新挂载到另一方案则须撤回，不能借用原方案的正式分析。
-        if (!touchedPlans.has(entry.value.analysis?.planId ?? "") && !newlyAttached.has(entry.value.id)) continue;
+        const stale = newlyAttached.has(entry.value.id) || !before || !after || before.hash !== after.hash
+            || after.chain.some((id) => changedEntries.has(id));
+        if (!stale) continue;
         const content = serializeEntryMarkdown({...entry.value, version: entry.value.version + 1, status: "draft", analysis: undefined});
         extra.push({relativePath: entry.path, content, expectedHash: entry.contentHash});
         replacements.set(entry.value.id, {version: entry.value.version + 1, contentHash: contentHash(content)});

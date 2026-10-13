@@ -18,6 +18,8 @@ issueId: null
 
 ## 当前 Task
 
+- [t03-unified-prompt-management](tasks/t03-unified-prompt-management/README.md)：2026-10-04 已授权正式实装全局提示词管理，内置默认只读；三模块调用、不可变版本与正式设置界面已接入，聚焦回归和隔离浏览器验证完成，等待开发者验收。
+- [t02-design-adaptation](tasks/t02-design-adaptation/README.md)：2026-10-03 已授权新增素材设计改编模式，确认另存新素材并保留原素材；沿用本 Work 已获批的主工作区开发例外。
 - [t01-inspiration-foundation](tasks/t01-inspiration-foundation/README.md)：定位模块接入合同，完成已授权范围的设计模块实现与验证。
 
 ## 来源

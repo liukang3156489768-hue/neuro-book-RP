@@ -72,7 +72,7 @@ Agent 建议标记在讨论模式下必须逐项确认；自动模式可依持�
 
 ## 实现合同
 
-伏笔 schema 为 `nbook.outline-foreshadowing/v2`，在 `title`、`body` 之外有可选分项 `surface`、`connection`、`plant: {situation, presentation, subtlety}`、`recover: {condition, echo, effect}`；创建时可写入，编辑时缺省沿用、显式 null 清除。已过章节数由 `deriveForeshadowingElapsed` 按方案从已固定线路节点的格号派生，经伏笔状态接口和规划 Agent 的伏笔上下文返回，工作台卡片只读显示；工作台伏笔库已提供定义与分项的编辑、确认界面，章节大纲正文可按选区插入标记；状态、来源和已过章节数仍只展示服务端派生结果。已有规范文件草稿／确认、标记解析器及版次、固定线路四状态派生、来源和先回收异常的服务端实现。正式读取及写入对损坏、未知伏笔 ID、未知动作或未成对标记 fail-closed；伏笔只读视图在 manifest/hash/front matter 有效时逐章节隔离标记异常，显示诊断并保留其他章节的正式来源，原文件不被覆盖。规划 Agent 已能读取局部损坏诊断并生成带 proposalId 的待审批建议；损坏章节另有专用 repair 预览／提交事务，候选仍须严格解析，章节修改后回到 draft。TipTap 标记编辑器和工作台异常展示已有组件合同。完整 Nuxt／浏览器验收、默认全包和真实模型仍未完成，故本 Spec 维持 planned。
+伏笔 schema 为 `nbook.outline-foreshadowing/v2`，在 `title`、`body` 之外有可选分项 `surface`、`connection`、`plant: {situation, presentation, subtlety}`、`recover: {condition, echo, effect}`；创建时可写入，编辑时缺省沿用、显式 null 清除。已过章节数由 `deriveForeshadowingElapsed` 按方案从已固定线路节点的格号派生，经伏笔状态接口和规划 Agent 的伏笔上下文返回，工作台卡片只读显示；工作台伏笔库已提供定义与分项的直接编辑（自动保存，已确认的伏笔修改前需确认回到草稿）和确认界面，章节大纲正文可在富文本编辑器中选中文字从浮动菜单插入、切换和移除标记；状态、来源和已过章节数仍只展示服务端派生结果。已有规范文件草稿／确认、标记解析器及版次、固定线路四状态派生、来源和先回收异常的服务端实现。正式读取及写入对损坏、未知伏笔 ID、未知动作或未成对标记 fail-closed；伏笔只读视图在 manifest/hash/front matter 有效时逐章节隔离标记异常，显示诊断并保留其他章节的正式来源，原文件不被覆盖。规划 Agent 的标记建议工具按动作区分 plant（新增埋设，章节没有任何标记时也用它）、strengthen（新增强化）、resolve（新增回收）与 repair，候选正文必须含对应动作的标记；规划 Agent 已能读取局部损坏诊断并生成带 proposalId 的待审批建议；损坏章节另有专用 repair 预览／提交事务，候选仍须严格解析，章节修改后回到 draft。TipTap 标记编辑器和工作台异常展示已有组件合同。完整 Nuxt／浏览器验收、默认全包和真实模型仍未完成，故本 Spec 维持 planned。
 
 ## 证据
 

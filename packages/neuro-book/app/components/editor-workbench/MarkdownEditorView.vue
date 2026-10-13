@@ -25,6 +25,7 @@ const props = defineProps<{
     inlineAiReferences?: InlineEditReference[];
     inlineAiHighlightReference?: InlineEditReference | null;
     enableQuickTriggers?: boolean;
+    canRewriteSelection?: boolean;
 }>();
 const emit = defineEmits<{
     save: [target: EditorDocumentTarget];
@@ -33,6 +34,7 @@ const emit = defineEmits<{
     actions: [target: EditorDocumentTarget, actions: readonly EditorAction[]];
     "open-frontmatter-profile": [kind: FrontmatterProfileKind];
     "inline-ai-reference": [reference: InlineEditReference];
+    "rewrite-selection": [target: EditorDocumentTarget, text: string];
 }>();
 const {t} = useI18n();
 const core = ref<MarkdownEditorHandle | null>(null);
@@ -131,6 +133,7 @@ onBeforeUnmount(() => emit("ready", null));
             :inline-ai-references="inlineAiReferences"
             :inline-ai-highlight-reference="inlineAiHighlightReference"
             :enable-quick-triggers="enableQuickTriggers"
+            :can-rewrite-selection="canRewriteSelection"
             @ready="ready"
             @change="change"
             @focus="emit('focus', document.target, true)"
@@ -138,6 +141,7 @@ onBeforeUnmount(() => emit("ready", null));
             @save-request="emit('save', document.target)"
             @open-frontmatter-profile="emit('open-frontmatter-profile', $event)"
             @inline-ai-reference="emit('inline-ai-reference', $event)"
+            @rewrite-selection="emit('rewrite-selection', document.target, $event)"
             @inline-comments-change="comments.setInlineComments"
             @inline-comment-select="comments.activateInlineComment"
         />

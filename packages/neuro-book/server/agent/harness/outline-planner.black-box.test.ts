@@ -79,7 +79,7 @@ describe("outline planner faux Agent Session contract", () => {
         });
         registerPlanningProfile(harness);
 
-        const action = {kind: "create-total" as const, title: "总纲", body: "主角必须在第一卷完成第一次选择。"};
+        const action = {kind: "create-plan" as const, title: "主方案"};
         const proposalId = planningProposalId({operation: "mutate", expectedRevision: 0, action});
         faux.setResponses([
             fauxAssistantMessage([fauxToolCall("get_planning_context", {}, {id: "context-1"})], {stopReason: "toolUse"}),
@@ -107,7 +107,7 @@ describe("outline planner faux Agent Session contract", () => {
         const waiting = await harness.invokeAgent({
             sessionId: created.sessionId,
             mode: "prompt",
-            message: {text: "请创建总纲"},
+            message: {text: "请创建主方案"},
         });
         expect(waiting.status).toBe("waiting");
         return {sessionId: created.sessionId, projectRoot};
@@ -140,7 +140,7 @@ describe("outline planner faux Agent Session contract", () => {
         });
         registerPlanningProfile(harness);
 
-        const action = {kind: "create-total" as const, title: "总纲", body: "主角必须在第一卷完成第一次选择。"};
+        const action = {kind: "create-plan" as const, title: "主方案"};
         const proposalId = planningProposalId({operation: "mutate", expectedRevision: 0, action});
         faux.setResponses([
             fauxAssistantMessage([fauxToolCall("get_planning_context", {}, {id: "context-1"})], {stopReason: "toolUse"}),
@@ -168,7 +168,7 @@ describe("outline planner faux Agent Session contract", () => {
         const waiting = await harness.invokeAgent({
             sessionId: created.sessionId,
             mode: "prompt",
-            message: {text: "请创建总纲"},
+            message: {text: "请创建主方案"},
             onEvent: (event) => {
                 events.push(event.type);
             },
@@ -196,7 +196,9 @@ describe("outline planner faux Agent Session contract", () => {
         expect(events).toContain("tool_execution_start");
         expect(events).toContain("tool_execution_end");
         const snapshot = await openProjectPlanning(projectWorkspaceRef("novel"));
-        expect(snapshot.entries.map((entry) => entry.value.title)).toContain("总纲");
+        // 创建方案同时创建该方案自己的空总纲。
+        expect(snapshot.manifest.plans.map((plan) => plan.title)).toEqual(["主方案"]);
+        expect(snapshot.entries.map((entry) => entry.value.title)).toContain("主方案·总纲");
         const context = harness.repo.reduce(await harness.repo.readSession(created.sessionId));
         const toolResults = context.messages.filter((message) => message.role === "toolResult");
         expect(toolResults.map((message) => message.toolName)).toEqual([

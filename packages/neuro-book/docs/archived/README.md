@@ -4,6 +4,7 @@
 
 - `drafts/`、`plan/`：旧草案与实现计划。
 - `reference/`：已退出的旧规范版本。
+  - [细纲写作指导标注](reference/detail-writing-guide-annotation.md)与[标注性能记录](reference/performance-optimization-notes.md)：段落标注于 2026-10-01 退出；当前合同见[细纲模板](../../../../docs/specs/outline/outline-entry-templates.md)。
 - `practices/`：一次实践和已失效设计记录。
 - `proposals/`：已完成沉淀、rejected 或 superseded 的提案。
 - `tutorials/`、`skills/`：不再发布的教程和产品 Skill。

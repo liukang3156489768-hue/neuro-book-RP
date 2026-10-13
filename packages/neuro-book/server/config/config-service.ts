@@ -79,7 +79,6 @@ import {
     runReadyProjectOperation,
 } from "nbook/server/workspace-files/project-session";
 import {resolveUserNbookRoot} from "nbook/server/workspace-files/workspace-runtime-root";
-import {sameProviderConnection} from "nbook/shared/models/provider-connection-identity";
 import type {ResolvedProjectWorkspace} from "nbook/server/workspace-files/project-identity";
 import {ProjectRootIdentityModule} from "nbook/server/workspace-files/project-root-identity";
 
@@ -675,6 +674,13 @@ export async function inspectProviderReferences(providerId: string): Promise<Arr
 /** 返回 Global Agent 配置中所有显式模型引用。 */
 function globalModelReferences(config: StoredGlobalConfig): ModelReferenceInput[] {
     const references: ModelReferenceInput[] = [];
+    if (config.agent?.summarizerModelKey) {
+        references.push({
+            modelKey: config.agent.summarizerModelKey,
+            path: ["agent", "summarizerModelKey"],
+            label: "摘要模型",
+        });
+    }
     if (config.agent?.profileModelDefaults && Object.hasOwn(config.agent.profileModelDefaults, "modelKey")) {
         references.push({
             modelKey: config.agent.profileModelDefaults.modelKey ?? null,
@@ -1365,9 +1371,8 @@ function normalizeGlobalModelsForWrite(
 }
 
 /**
- * Provider Config ID 是连接身份，不允许通过普通保存偷偷改名或换端点。
- * Provider Model API 只影响发现和候选补全，可以在同一连接上显式修改。
- * 显式 clone/migrate 尚未进入此保存接口；调用方必须新建 Provider 并重新提供凭据。
+ * Provider Config ID 是连接引用，仍不允许通过普通保存改名；Base URL 与代理属于
+ * 用户可编辑的连接参数，尤其是 Custom Provider 必须能在创建后继续调整端点。
  */
 function assertProviderConnectionsStable(
     providers: NonNullable<GlobalConfigUpdateDto["models"]>["providers"],
@@ -1397,20 +1402,6 @@ function assertProviderConnectionsStable(
             throw createError({
                 statusCode: 400,
                 message: `Provider ID 不可修改：${stored.id}。请复制为新的 Provider，再迁移模型和引用。`,
-            });
-        }
-        if (!sameProviderConnection({
-            id: stored.id,
-            baseURL: stored.options.baseURL,
-            proxy: stored.options.proxy,
-        }, {
-            id: provider.id,
-            baseURL: provider.options.baseURL,
-            proxy: provider.options.proxy,
-        })) {
-            throw createError({
-                statusCode: 400,
-                message: `Provider ${provider.id} 的连接身份不可修改（Base URL 或代理已变化）。请复制为新的 Provider。`,
             });
         }
     }

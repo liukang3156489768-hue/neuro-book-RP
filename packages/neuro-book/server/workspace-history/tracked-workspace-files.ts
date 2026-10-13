@@ -75,6 +75,30 @@ export async function writeWorkspaceTextFileTracked(input: {
     }
 }
 
+/** 覆盖写入受管二进制文件并记账；用于角色头像等不适合经过 UTF-8 的 workspace 资产。 */
+export async function writeWorkspaceBinaryFileTracked(input: {
+    target: WorkspaceFileTarget;
+    history?: ProjectHistoryHandle;
+    filePath: string;
+    bytes: Uint8Array;
+    actor: OperationActor;
+}): Promise<void> {
+    await assertWorkspaceStorageBoundary(input.target, input.filePath, "mutation");
+    const target = historyTarget(input.target);
+    const before = target === null ? null : await readBytesForRecord(target.projectRoot, input.filePath);
+    const absolutePath = resolveWorkspacePath(input.target.root, input.filePath);
+    await fs.mkdir(path.dirname(absolutePath), {recursive: true});
+    await fs.writeFile(absolutePath, input.bytes);
+    if (target !== null) {
+        await recordProjectWrite(requireHistory(input.history), {
+            relativePath: input.filePath,
+            actor: input.actor,
+            before,
+            after: new Uint8Array(input.bytes),
+        });
+    }
+}
+
 /** 创建新文本文件 + 记账（已存在时核心函数拒绝，不会产生覆盖语义）。 */
 export async function createWorkspaceFileTracked(input: Omit<WorkspaceNewFileInput, "root"> & {target: WorkspaceFileTarget; history?: ProjectHistoryHandle; actor: OperationActor}): Promise<WorkspaceFileNode> {
     await assertWorkspaceStorageBoundary(input.target, input.filePath, "mutation");

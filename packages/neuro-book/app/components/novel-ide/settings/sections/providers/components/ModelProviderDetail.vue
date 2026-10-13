@@ -44,7 +44,7 @@ const emit = defineEmits<{
 
 const {t} = useI18n();
 
-/** 已保存 Provider 的身份字段（id / baseURL / proxy）在本页只读，改动只能来自配置文件。 */
+/** Provider ID 仍由引用迁移逻辑统一处理；连接地址和代理始终属于可编辑配置。 */
 const isSavedProvider = computed(() => props.provider?.sourceIndex !== undefined);
 const enabledModelCount = computed(() => props.provider?.models.filter((model) => model.enabled).length ?? 0);
 const apiKeyPlaceholder = computed(() => {
@@ -127,10 +127,10 @@ function patchOptions(patch: Partial<ModelSettingsProviderDraft["options"]>): vo
             </div>
         </header>
 
-        <!-- 连接：身份与连接参数。已保存 Provider 的这三个字段只读，改动只能来自配置文件。 -->
+        <!-- 连接：身份与连接参数。空白 Provider 与已保存 Provider 都允许调整地址和代理。 -->
         <section class="mt-[var(--space-6)] border-t border-[var(--divider)] pt-[var(--space-4)]">
             <h3 class="text-[var(--text-sm)] [font-weight:var(--weight-strong)] leading-[var(--leading-ui)] text-[var(--text-main)]">{{ t("settings.panels.models.connectionGroup") }}</h3>
-            <p v-if="isSavedProvider" class="mt-[var(--space-1)] text-[var(--text-2xs)] leading-[var(--leading-ui)] text-[var(--text-muted)]">{{ t("settings.panels.models.providerIdentityHint") }}</p>
+            <p v-if="isSavedProvider" class="mt-[var(--space-1)] text-[var(--text-2xs)] leading-[var(--leading-ui)] text-[var(--text-muted)]">API Base 与代理可直接修改；Provider ID 修改仍需通过引用迁移。</p>
 
             <div class="provider-form-grid mt-[var(--space-4)] grid gap-x-[var(--space-3)] gap-y-[var(--space-4)]">
                 <label class="block min-w-0">
@@ -164,7 +164,6 @@ function patchOptions(patch: Partial<ModelSettingsProviderDraft["options"]>): vo
                         class="mt-[var(--space-2)]"
                         size="sm"
                         :model-value="props.provider.options.baseURL"
-                        :readonly="isSavedProvider"
                         :placeholder="t('settings.panels.models.apiBasePlaceholder')"
                         :disabled="props.saving"
                         @update:model-value="patchOptions({baseURL: $event})"
@@ -177,7 +176,6 @@ function patchOptions(patch: Partial<ModelSettingsProviderDraft["options"]>): vo
                         class="mt-[var(--space-2)]"
                         size="sm"
                         :model-value="props.provider.options.proxy"
-                        :readonly="isSavedProvider"
                         placeholder="http://127.0.0.1:7890"
                         :disabled="props.saving"
                         @update:model-value="patchOptions({proxy: $event})"

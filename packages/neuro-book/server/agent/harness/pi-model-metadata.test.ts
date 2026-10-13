@@ -37,6 +37,28 @@ describe("Pi model metadata contract", () => {
             maxTokens: 8192,
         }))).toThrow("maxTokens 不能大于 contextWindowTokens");
     });
+
+    it("为近期 Anthropic Claude 模型补齐 adaptive thinking 能力", () => {
+        const resolved = resolvePiModelMetadata("kitool", createProvider({baseURL: "https://kitool.ai"}), createModel({
+            id: "claude-opus-5-5",
+            api: "anthropic-messages",
+            reasoning: true,
+        }));
+
+        expect(resolved.compat).toMatchObject({forceAdaptiveThinking: true});
+        expect(resolved.thinkingLevelMap).toMatchObject({off: null});
+    });
+
+    it("不为旧版或非 Anthropic 模型猜测 adaptive thinking", () => {
+        const resolved = resolvePiModelMetadata("custom", createProvider(), createModel({
+            id: "claude-opus-4-5",
+            api: "anthropic-messages",
+            reasoning: true,
+        }));
+
+        expect(resolved.compat).toBeUndefined();
+        expect(resolved.thinkingLevelMap).toBeUndefined();
+    });
 });
 
 function createProvider(overrides: {baseURL?: string} = {}): ConfiguredProviderConfig {

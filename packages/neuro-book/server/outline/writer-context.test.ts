@@ -3,13 +3,15 @@ import {link, mkdir, rm, writeFile} from "node:fs/promises";
 import {dirname, join} from "node:path";
 import {absoluteFsPath} from "nbook/server/runtime/paths/file-path";
 import {createTestTmpRoot} from "@notnotype/neuro-book-test-support/tmp";
-import {contentHash, serializeEntryMarkdown, serializeLineYaml, type OutlineEntry, type OutlineId, type OutlineLine} from "./format";
+import {contentHash, serializeLineYaml, type OutlineEntry, type OutlineId, type OutlineLine} from "./format";
 import type {PlanningSnapshot} from "./index";
 import {prepareForeshadowingAction} from "./foreshadowing";
 import {analyzeLine, confirmLine} from "./line-analysis";
 import {analyzeDetail, confirmDetail} from "./detail-analysis";
-import {buildDesignGraph, PlanningFixture} from "./line-graph.fixture";
-import {readWriterOutlineContext} from "./writer-context";
+import {invalidateDependentDetails} from "./analysis-invalidation";
+import {PlanningFixture} from "./line-graph.fixture";
+import {detailBody, sceneDetail} from "./detail.fixture";
+import {readWriterChapterContext, readWriterChapterDirectory} from "./writer-context";
 import {readSelectedWriterMaterials} from "./writer-materials";
 
 const mark = (id: string, foreshadowId: OutlineId, action: string) =>
@@ -27,173 +29,247 @@ function createForeshadowing(fixture: PlanningFixture, status: "adopted" | "draf
     return created.id;
 }
 
-async function fixLine(fixture: PlanningFixture, lineId: OutlineId) {
-    const request = fixture.analysisRequest(lineId);
-    const issued = await analyzeLine(fixture.snapshot, request, async () => JSON.stringify({summary: "通过", conflicts: []}));
-    fixture.publish(confirmLine(fixture.snapshot, request, issued, issued.report.reportId, []));
-    return fixture.analysisRequest(lineId);
+function adoptEntry(fixture: PlanningFixture, planId: string, entryId: OutlineId): void {
+    const source = fixture.entry(entryId);
+    fixture.library({kind: "adopt-entry", planId, entryId, expectedVersion: source.value.version,
+        expectedContentHash: source.contentHash});
 }
 
-async function adoptDetail(fixture: PlanningFixture, planId: string, chapterId: OutlineId, patch: Partial<OutlineEntry>): Promise<OutlineId> {
-    const detailId = fixture.library({kind: "create-entry", planId, parentId: chapterId, entryKind: "detail",
-        title: "第一场", body: patch.body ?? "雨中相遇",
-        ...(patch.references === undefined ? {} : {references: patch.references})}).entryId!;
+function createEntry(fixture: PlanningFixture, planId: string, parentId: OutlineId, entryKind: "volume" | "chapter" | "detail",
+    title: string, body = title, patch: Partial<OutlineEntry> = {}): OutlineId {
+    // 细纲要通过结构检查才能审阅；给的正文不是模板时包成单场景细纲。
+    const detailText = entryKind === "detail" && !body.startsWith("# 章节总览") ? sceneDetail(body).body : body;
+    return fixture.library({kind: "create-entry", planId, parentId, entryKind, title, body: detailText,
+        ...(patch.materialRefs === undefined ? {} : {materialRefs: patch.materialRefs}),
+        ...(patch.references === undefined ? {} : {references: patch.references}),
+        ...(patch.writingGuidance === undefined ? {} : {writingGuidance: patch.writingGuidance}),
+        ...(patch.targetWords === undefined ? {} : {targetWords: patch.targetWords})}).entryId!;
+}
+
+/** 与 host 一样经撤回逻辑发布，才能验证审阅其他细纲不会撤回已审阅细纲。 */
+async function reviewDetail(fixture: PlanningFixture, planId: string, detailId: OutlineId): Promise<void> {
     const source = fixture.entry(detailId);
     const request = {planId, entryId: detailId, expectedRevision: fixture.snapshot.manifest.revision,
         expectedVersion: source.value.version, expectedContentHash: source.contentHash};
     const report = await analyzeDetail(fixture.snapshot, request, async () => JSON.stringify({summary: "一致",
         deviations: [], conflicts: []}));
-    fixture.publish(confirmDetail(fixture.snapshot, request, report, report.report.reportId, true, []).publish);
-    return detailId;
+    fixture.publish(invalidateDependentDetails(fixture.snapshot,
+        confirmDetail(fixture.snapshot, request, report, report.report.reportId, true, []).publish));
 }
 
-/** 总纲 → 第一章的固定主线；细纲须在固定前采用，否则方案上下文变化会让线路变黄。 */
-async function fixture(
-    withDetail = false, chapterBody?: (foreshadowId: OutlineId) => string, foreshadowStatus: "adopted" | "draft" = "adopted",
-    detailPatch: Partial<OutlineEntry> = {},
-) {
+function createPlan(fixture: PlanningFixture, title = "方案") {
+    const created = fixture.library({kind: "create-plan", title});
+    const planId = created.planId!;
+    const rootId = created.entryId!;
+    adoptEntry(fixture, planId, rootId);
+    return {rootId, planId};
+}
+
+/** 总纲 → 第一章 → 一份已审阅细纲；不建线路图，证明写作资格与线路无关。 */
+async function fixture(options: Readonly<{
+    chapterBody?: (foreshadowId: OutlineId) => string;
+    foreshadowStatus?: "adopted" | "draft";
+    detail?: Partial<OutlineEntry>;
+}> = {}) {
     const planning = new PlanningFixture();
-    const rootId = planning.library({kind: "create-total", title: "总纲", body: "作品背景"}).entryId!;
-    const planId = planning.library({kind: "create-plan", title: "方案"}).planId!;
-    const root = planning.entry(rootId);
-    planning.library({kind: "adopt-entry", planId, entryId: rootId, expectedVersion: root.value.version,
-        expectedContentHash: root.contentHash});
-    const foreshadowId = chapterBody ? createForeshadowing(planning, foreshadowStatus) : undefined;
-    const chapterId = planning.library({kind: "create-entry", planId, parentId: rootId, entryKind: "chapter", title: "第一章",
-        body: chapterBody && foreshadowId ? chapterBody(foreshadowId) : "人物相遇", materialRefs: ["lorebook/people/hero.md"],
-        references: [{path: "notes/style.md"}], writingGuidance: "用有限视角", targetWords: 2400}).entryId!;
-    const chapter = planning.entry(chapterId);
-    planning.library({kind: "adopt-entry", planId, entryId: chapterId, expectedVersion: chapter.value.version,
-        expectedContentHash: chapter.contentHash});
-    const detailId = withDetail ? await adoptDetail(planning, planId, chapterId, detailPatch) : undefined;
-    const rootNode = planning.graph("add-graph-node", planId, {column: 0, row: 0, entryId: rootId}).nodeId!;
-    const chapterNode = planning.graph("add-graph-node", planId, {column: 1, row: 0, entryId: chapterId}).nodeId!;
-    planning.graph("connect-graph-nodes", planId, {from: rootNode, to: chapterNode});
-    const lineId = planning.createLine(planId, "主线", "main", [rootNode, chapterNode]);
-    const request = await fixLine(planning, lineId);
-    return {planning, snapshot: planning.snapshot, request, planId, lineId, rootId, chapterId, detailId, foreshadowId,
-        rootNode, chapterNode};
+    const {rootId, planId} = createPlan(planning);
+    const foreshadowId = options.chapterBody ? createForeshadowing(planning, options.foreshadowStatus ?? "adopted") : undefined;
+    const chapterId = createEntry(planning, planId, rootId, "chapter", "第一章",
+        options.chapterBody && foreshadowId ? options.chapterBody(foreshadowId) : "人物相遇",
+        {materialRefs: ["lorebook/people/hero.md"], references: [{path: "notes/style.md"}], writingGuidance: "用有限视角", targetWords: 2400});
+    adoptEntry(planning, planId, chapterId);
+    const detailId = createEntry(planning, planId, chapterId, "detail", "第一场", options.detail?.body ?? "雨中相遇", options.detail);
+    await reviewDetail(planning, planId, detailId);
+    const request = {planId, chapterEntryId: chapterId};
+    return {planning, snapshot: planning.snapshot, request, planId, rootId, chapterId, detailId, foreshadowId};
 }
 
-describe("writer 只读规划投影", () => {
-    it("仅交接固定线路当前章节的有效伏笔标记及规范定义来源", async () => {
-        const body = (id: OutlineId) => `${mark("early", id, "recover")} ${mark("plant", id, "plant")} ${mark("late", id, "recover")}`;
-        const {snapshot, request, chapterId, foreshadowId} = await fixture(false, body);
-        const context = readWriterOutlineContext(snapshot, request);
-        const definition = snapshot.foreshadowing.find(({value}) => value.id === foreshadowId)!;
-        expect(context.nodes[0]!.foreshadowing).toEqual([]);
-        expect(context.nodes[1]!.foreshadowing).toMatchObject([
-            {id: foreshadowId, title: "银纹", content: "plant", marker: "fm-plant", action: "plant",
-                path: definition.path, version: definition.value.version,
-                contentHash: definition.contentHash, entryPath: snapshot.entries.find(({value}) => value.id === chapterId)!.path},
-            {id: foreshadowId, marker: "fm-late", action: "recover"},
-        ]);
-        expect(context.nodes[1]!.foreshadowing).toHaveLength(2);
-        expect(context.nodes[1]!.foreshadowing[0]).not.toHaveProperty("body");
-        const draft = await fixture(false, body, "draft");
-        expect(readWriterOutlineContext(draft.snapshot, draft.request).nodes[1]!.foreshadowing).toEqual([]);
-    });
-
-    it("仅从有效固定节点交接正式章节正文、元数据及规范来源", async () => {
-        const {snapshot, request, planId, lineId, rootNode, chapterNode, chapterId} = await fixture();
-        const context = readWriterOutlineContext(snapshot, request);
-        expect(context).toMatchObject({lineId, planId, revision: snapshot.manifest.revision,
-            nodes: [{nodeId: rootNode, column: 0, kind: "total", body: "作品背景"},
-                {nodeId: chapterNode, column: 1, kind: "chapter", body: "人物相遇", materialRefs: ["lorebook/people/hero.md"],
-                    references: [{path: "notes/style.md"}], writingGuidance: "用有限视角", targetWords: 2400,
-                    path: snapshot.entries.find(({value}) => value.id === chapterId)!.path, version: 1}]});
-        expect(context.nodes[1]).not.toHaveProperty("analysis");
-    });
-
-    it("按格号交接线路节点，伏笔来源只取属于本线路的节点", async () => {
+describe("正文写作章节目录", () => {
+    it("按卷纲顺序、卷内章节顺序排列，直属总纲的章节排在最后，并逐章给出资格", () => {
         const planning = new PlanningFixture();
-        const foreshadowId = createForeshadowing(planning, "adopted");
-        const {planId, entries, nodes, lines} = buildDesignGraph(planning);
-        // k1 只属于角色线乙，a2 只属于角色线甲，j4 是两者的汇合节点。
-        const rewrite = (key: "k1" | "a2" | "j4", body: string) => {
-            const source = planning.entry(entries[key]);
-            planning.library({kind: "edit-entry", planId, entryId: entries[key], expectedVersion: source.value.version,
-                expectedContentHash: source.contentHash, title: source.value.title, body});
-            const edited = planning.entry(entries[key]);
-            planning.library({kind: "adopt-entry", planId, entryId: entries[key], expectedVersion: edited.value.version,
-                expectedContentHash: edited.contentHash});
-        };
-        rewrite("k1", `k1 ${mark("k1", foreshadowId, "plant")}`);
-        rewrite("a2", `a2 ${mark("a2", foreshadowId, "recover")}`);
-        rewrite("j4", `j4 ${mark("j4", foreshadowId, "reinforce")}`);
-        // 节点按乱序保存，交接顺序仍由格号决定。
-        const shuffled = [nodes.m6, nodes.j4, nodes.m0, nodes.k3, nodes.k1];
-        planning.line({kind: "edit-draft-line", ...planning.lineCas(lines.characterB), title: "角色线乙", type: "character",
-            nodeIds: shuffled});
-        await fixLine(planning, lines.characterA);
-        const request = await fixLine(planning, lines.characterB);
-        const context = readWriterOutlineContext(planning.snapshot, request);
-        expect(context.nodes.map(({nodeId}) => nodeId)).toEqual([nodes.m0, nodes.k1, nodes.k3, nodes.j4, nodes.m6]);
-        expect(context.nodes.map(({column}) => column)).toEqual([0, 1, 3, 4, 6]);
-        const markers = context.nodes.flatMap(({nodeId, foreshadowing}) => foreshadowing.map(({marker, action}) => ({nodeId, marker, action})));
-        expect(markers).toEqual([
-            {nodeId: nodes.k1, marker: "fm-k1", action: "plant"},
-            {nodeId: nodes.j4, marker: "fm-j4", action: "reinforce"},
-        ]);
+        const {rootId, planId} = createPlan(planning);
+        const loose = createEntry(planning, planId, rootId, "chapter", "番外");
+        const first = createEntry(planning, planId, rootId, "volume", "第一卷");
+        const second = createEntry(planning, planId, rootId, "volume", "第二卷");
+        const c1 = createEntry(planning, planId, first, "chapter", "一之一");
+        const c3 = createEntry(planning, planId, second, "chapter", "二之一");
+        const c2 = createEntry(planning, planId, first, "chapter", "一之二");
+        const c4 = createEntry(planning, planId, second, "chapter", "二之二");
+        adoptEntry(planning, planId, c1);
+        const directory = readWriterChapterDirectory(planning.snapshot, {planId});
+        expect(directory.chapters.map(({entryId}) => entryId)).toEqual([c1, c2, c3, c4, loose]);
+        expect(directory.chapters.map(({volume}) => volume?.title ?? null)).toEqual(["第一卷", "第一卷", "第二卷", "第二卷", null]);
+        // 卷纲本身是草稿不影响章节资格，章节只看自身与细纲。
+        expect(directory.chapters[0]).toMatchObject({writable: false, block: {code: "DETAIL_NOT_REVIEWED", message: "本章还没有细纲"}});
+        expect(directory.chapters[1]).toMatchObject({writable: false, block: {code: "OUTLINE_NOT_ADOPTED"}});
     });
 
-    it("只交接当前方案正式章节所属且报告仍有效的细纲，不混入草稿或旁支", async () => {
-        const {snapshot, request, detailId} = await fixture(true);
-        const result = readWriterOutlineContext(snapshot, request);
-        const detail = snapshot.entries.find(({value}) => value.id === detailId)!;
-        expect(result.nodes[0]!.details).toEqual([]);
-        expect(result.nodes[1]!.details).toMatchObject([{entryId: detailId, body: "雨中相遇",
-            path: detail.path, version: 1}]);
-        const draftDetail: OutlineEntry = {...detail.value, id: "ol-other", status: "draft", version: 0,
-            analysis: undefined, body: "草稿不应进入正文"};
-        const another = {...detail, value: draftDetail, path: "outline/entries/other.md",
-            contentHash: contentHash(serializeEntryMarkdown(draftDetail))};
-        const withDraft = {...snapshot, entries: [...snapshot.entries, another], manifest: {...snapshot.manifest,
-            entries: [...snapshot.manifest.entries, {id: draftDetail.id, path: another.path, version: 0,
-                contentHash: another.contentHash}]}};
-        expect(readWriterOutlineContext(withDraft, request).nodes[1]!.details).toHaveLength(1);
+    it("每个方案读取自己总纲下的章节目录，互不串到对方方案", async () => {
+        const planning = new PlanningFixture();
+        const a = createPlan(planning, "甲方案");
+        const b = createPlan(planning, "乙方案");
+        expect(a.rootId).not.toBe(b.rootId);
+        const chapterA = createEntry(planning, a.planId, a.rootId, "chapter", "甲章");
+        const volumeB = createEntry(planning, b.planId, b.rootId, "volume", "乙卷");
+        const chapterB1 = createEntry(planning, b.planId, volumeB, "chapter", "乙章一");
+        const chapterB2 = createEntry(planning, b.planId, b.rootId, "chapter", "乙番外");
+        const directoryA = readWriterChapterDirectory(planning.snapshot, {planId: a.planId});
+        const directoryB = readWriterChapterDirectory(planning.snapshot, {planId: b.planId});
+        expect(directoryA.chapters.map(({entryId}) => entryId)).toEqual([chapterA]);
+        expect(directoryB.chapters.map(({entryId}) => entryId)).toEqual([chapterB1, chapterB2]);
+        expect(directoryB.chapters.map(({volume}) => volume?.title ?? null)).toEqual(["乙卷", null]);
+        // 章节只属于创建它的方案，用另一方案的 planId 请求上下文会被拒绝。
+        adoptEntry(planning, b.planId, chapterB1);
+        await reviewDetail(planning, b.planId, createEntry(planning, b.planId, chapterB1, "detail", "乙场景"));
+        expect(readWriterChapterContext(planning.snapshot, {planId: b.planId, chapterEntryId: chapterB1}).chapter.entryId).toBe(chapterB1);
+        expect(() => readWriterChapterContext(planning.snapshot, {planId: a.planId, chapterEntryId: chapterB1}))
+            .toThrow(/不在该写作方案中/);
     });
 
-    it("细纲交接场景写作指导与篇幅预算，待补参考文件作为告警返回", async () => {
-        const body = '开场<!-- nb:guidance marker="g1" scene="雨夜" words="800" -->略写环境<!-- /nb:guidance marker="g1" -->';
-        const {snapshot, request, detailId} = await fixture(true, undefined, "adopted", {body,
-            references: [{path: "notes/style.md"}, {locator: "旧城区地图", purpose: "街道走向", pending: true}]});
-        const context = readWriterOutlineContext(snapshot, request);
-        expect(context.nodes[1]!.details[0]).toMatchObject({guidance: [{marker: "g1", scene: "雨夜", words: 800, text: "略写环境"}]});
-        expect(context.nodes[1]!.guidance).toEqual([]);
-        expect(context.warnings).toEqual([{code: "PENDING_REFERENCE", entryId: detailId,
-            entryPath: snapshot.entries.find(({value}) => value.id === detailId)!.path,
-            locator: "旧城区地图", purpose: "街道走向"}]);
+    it("手动共用同一总纲的方案各自挂载的章节仍按方案隔离", () => {
+        const planning = new PlanningFixture();
+        const a = createPlan(planning, "甲方案");
+        const planB = planning.library({kind: "create-plan", title: "乙方案"}).planId!;
+        planning.library({kind: "associate-total", planId: planB, totalId: a.rootId});
+        const chapterA = createEntry(planning, a.planId, a.rootId, "chapter", "甲章");
+        const chapterB = createEntry(planning, planB, a.rootId, "chapter", "乙章");
+        expect(readWriterChapterDirectory(planning.snapshot, {planId: a.planId}).chapters.map(({entryId}) => entryId)).toEqual([chapterA]);
+        expect(readWriterChapterDirectory(planning.snapshot, {planId: planB}).chapters.map(({entryId}) => entryId)).toEqual([chapterB]);
     });
 
-    it("拒绝旧版本、草稿、黄色节点，不回退读取大纲库草稿", async () => {
-        const {snapshot, request, lineId, chapterId} = await fixture();
-        expect(() => readWriterOutlineContext(snapshot, {...request, expectedRevision: request.expectedRevision - 1})).toThrow(/版本/);
-        const line = snapshot.lines.find(({value}) => value.id === lineId)!;
-        const draft: OutlineLine = {...line.value, fixed: false};
-        const draftHash = contentHash(serializeLineYaml(draft));
-        expect(() => readWriterOutlineContext({...snapshot, lines: [{...line, value: draft, contentHash: draftHash}]},
-            {...request, expectedContentHash: draftHash})).toThrow(/失效/);
-        const changed: PlanningSnapshot = {...snapshot, entries: snapshot.entries.map((entry) => entry.value.id === chapterId
-            ? {...entry, value: {...entry.value, body: "未重分析"}, contentHash: contentHash("未重分析")} : entry)};
-        expect(() => readWriterOutlineContext(changed, request)).toThrow(/失效/);
+    it("可写章节不依赖线路；细纲按方案顺序列出，任一细纲未审阅则整章不可写", async () => {
+        const {planning, planId, chapterId, detailId} = await fixture();
+        expect(readWriterChapterDirectory(planning.snapshot, {planId}).chapters).toMatchObject([{entryId: chapterId,
+            writable: true, details: [{entryId: detailId, status: "adopted", version: 1}]}]);
+        expect(planning.snapshot.lines).toEqual([]);
+        const second = createEntry(planning, planId, chapterId, "detail", "第二场");
+        const chapter = readWriterChapterDirectory(planning.snapshot, {planId}).chapters[0]!;
+        expect(chapter.details.map(({entryId}) => entryId)).toEqual([detailId, second]);
+        expect(chapter).toMatchObject({writable: false, block: {code: "DETAIL_NOT_REVIEWED", message: "细纲「第二场」未审阅"}});
+    });
+
+    it("同章两份细纲依次审阅后都保持已审阅，多个章节可同时可写", async () => {
+        const {planning, planId, rootId, chapterId, detailId, request} = await fixture();
+        const second = createEntry(planning, planId, chapterId, "detail", "第二场", "巷口追逐");
+        await reviewDetail(planning, planId, second);
+        const otherChapter = createEntry(planning, planId, rootId, "chapter", "第二章");
+        adoptEntry(planning, planId, otherChapter);
+        await reviewDetail(planning, planId, createEntry(planning, planId, otherChapter, "detail", "第三场"));
+        expect(readWriterChapterDirectory(planning.snapshot, {planId}).chapters).toMatchObject([
+            {entryId: chapterId, writable: true, details: [{entryId: detailId, status: "adopted"}, {entryId: second, status: "adopted"}]},
+            {entryId: otherChapter, writable: true}]);
+        expect(readWriterChapterContext(planning.snapshot, request).details.map(({entryId, body}) => [entryId, body]))
+            .toEqual([[detailId, sceneDetail("雨中相遇").body], [second, sceneDetail("巷口追逐").body]]);
+    });
+
+    it("章节大纲回到草稿后撤销资格，写作方案不存在时拒绝", async () => {
+        const {planning, planId, chapterId, request} = await fixture();
+        const source = planning.entry(chapterId);
+        planning.library({kind: "edit-entry", planId, entryId: chapterId, expectedVersion: source.value.version,
+            expectedContentHash: source.contentHash, title: source.value.title, body: "改写"});
+        expect(readWriterChapterDirectory(planning.snapshot, {planId}).chapters[0]).toMatchObject({writable: false,
+            block: {code: "OUTLINE_NOT_ADOPTED"}});
+        expect(() => readWriterChapterContext(planning.snapshot, request)).toThrow(/不可写/);
+        expect(() => readWriterChapterDirectory(planning.snapshot, {planId: "missing"})).toThrow(/方案不存在/);
     });
 });
 
+describe("正文写作章节上下文", () => {
+    it("返回正式章节大纲、本章细纲与卷纲，不含分析报告", async () => {
+        const {snapshot, request, planId, chapterId, detailId} = await fixture();
+        const context = readWriterChapterContext(snapshot, request);
+        const chapter = snapshot.entries.find(({value}) => value.id === chapterId)!;
+        const detail = snapshot.entries.find(({value}) => value.id === detailId)!;
+        expect(context).toMatchObject({planId, revision: snapshot.manifest.revision, volume: null,
+            chapter: {entryId: chapterId, kind: "chapter", body: "人物相遇", materialRefs: ["lorebook/people/hero.md"],
+                references: [{path: "notes/style.md"}], writingGuidance: "用有限视角", targetWords: 2400,
+                path: chapter.path, version: 1},
+            details: [{entryId: detailId, body: sceneDetail("雨中相遇").body, path: detail.path, version: 1}],
+            basis: {chapterVersion: 1, chapterContentHash: chapter.contentHash,
+                details: [{entryId: detailId, version: 1, contentHash: detail.contentHash}]}});
+        expect(context.details[0]).not.toHaveProperty("analysis");
+        expect(context).not.toHaveProperty("basisChanged");
+        expect(() => readWriterChapterContext(snapshot, {...request, chapterEntryId: "ol-missing"})).toThrow(/不在该写作方案/);
+    });
 
-describe("正式线路素材索引按需读取", () => {
-    it("仅读取所选正式素材并返回章节来源与内容 hash", async () => {
+    it("附带的依据与当前一致时标记未变化，不一致时返回当前依据与变化标记", async () => {
+        const {snapshot, request} = await fixture();
+        const {basis} = readWriterChapterContext(snapshot, request);
+        expect(readWriterChapterContext(snapshot, {...request, expectedBasis: basis}).basisChanged).toBe(false);
+        const stale = {...basis, chapterVersion: basis.chapterVersion - 1};
+        expect(readWriterChapterContext(snapshot, {...request, expectedBasis: stale})).toMatchObject({basisChanged: true, basis});
+        expect(readWriterChapterContext(snapshot, {...request, expectedBasis: {...basis, details: []}}).basisChanged).toBe(true);
+    });
+
+    it("伏笔标记取自章节大纲，只含已确认伏笔，不按线路判定先后，不含定义正文", async () => {
+        const body = (id: OutlineId) => `${mark("early", id, "recover")} ${mark("plant", id, "plant")}`;
+        const {snapshot, request, chapterId, foreshadowId} = await fixture({chapterBody: body});
+        const context = readWriterChapterContext(snapshot, request);
+        const definition = snapshot.foreshadowing.find(({value}) => value.id === foreshadowId)!;
+        expect(context.foreshadowing).toMatchObject([
+            {id: foreshadowId, marker: "fm-early", action: "recover", content: "early"},
+            {id: foreshadowId, title: "银纹", marker: "fm-plant", action: "plant", content: "plant",
+                path: definition.path, version: definition.value.version, contentHash: definition.contentHash,
+                entryPath: snapshot.entries.find(({value}) => value.id === chapterId)!.path},
+        ]);
+        expect(context.foreshadowing[0]).not.toHaveProperty("body");
+        const draft = await fixture({chapterBody: body, foreshadowStatus: "draft"});
+        expect(readWriterChapterContext(draft.snapshot, draft.request).foreshadowing).toEqual([]);
+    });
+
+    it("关联的线路未固定或节点失效时，章节资格与上下文不受影响", async () => {
+        const {planning, planId, rootId, chapterId, request} = await fixture();
+        const before = readWriterChapterContext(planning.snapshot, request);
+        const rootNode = planning.graph("add-graph-node", planId, {column: 0, row: 0, entryId: rootId}).nodeId!;
+        const chapterNode = planning.graph("add-graph-node", planId, {column: 1, row: 0, entryId: chapterId}).nodeId!;
+        planning.graph("connect-graph-nodes", planId, {from: rootNode, to: chapterNode});
+        const lineId = planning.createLine(planId, "主线", "main", [rootNode, chapterNode]);
+        const lineRequest = planning.analysisRequest(lineId);
+        const issued = await analyzeLine(planning.snapshot, lineRequest, async () => JSON.stringify({summary: "通过", conflicts: []}));
+        planning.publish(confirmLine(planning.snapshot, lineRequest, issued, issued.report.reportId, []));
+        // 伪造固定线路引用了已被改动的内容，线路检查会把节点标黄；写作交接不读取它。
+        const snapshot = planning.snapshot;
+        const line = snapshot.lines.find(({value}) => value.id === lineId)!;
+        const broken: OutlineLine = {...line.value, analysis: {...line.value.analysis!, entryHashes: []}};
+        const withBrokenLine: PlanningSnapshot = {...snapshot,
+            lines: [{...line, value: broken, contentHash: contentHash(serializeLineYaml(broken))}]};
+        expect(readWriterChapterContext(withBrokenLine, request)).toMatchObject({chapter: before.chapter, details: before.details,
+            foreshadowing: before.foreshadowing});
+        expect(readWriterChapterDirectory(withBrokenLine, {planId}).chapters[0]!.writable).toBe(true);
+    });
+
+    it("细纲参考资料取自正文各场景：有链接的给路径，没有链接的作为待补告警返回", async () => {
+        const body = detailBody({scenes: [{plot: ["相遇"], references: ["[文风](notes/style.md)", "旧城区地图"]},
+            {plot: ["追逐"], references: ["[城](notes/city.md)"]}]});
+        const {snapshot, request, detailId} = await fixture({detail: {body}});
+        const detail = readWriterChapterContext(snapshot, request).details[0]!;
+        expect(detail.references).toEqual([{path: "notes/style.md", purpose: "文风"}, {pending: true, locator: "旧城区地图"},
+            {path: "notes/city.md", purpose: "城"}]);
+        expect(readWriterChapterContext(snapshot, request).warnings).toEqual([{code: "PENDING_REFERENCE", entryId: detailId,
+            entryPath: snapshot.entries.find(({value}) => value.id === detailId)!.path, locator: "旧城区地图"}]);
+    });
+
+    it("细纲来源被绕过领域操作改动时拒绝整份上下文", async () => {
+        const {snapshot, request, detailId} = await fixture();
+        const changed: PlanningSnapshot = {...snapshot, entries: snapshot.entries.map((entry) => entry.value.id === detailId
+            ? {...entry, value: {...entry.value, body: "未重审"}} : entry)};
+        expect(() => readWriterChapterContext(changed, request)).toThrow(/不可写.*来源已变化/);
+    });
+});
+
+describe("章节素材按需读取", () => {
+    it("仅读取本章正式条目引用的素材，并返回来源与内容 hash", async () => {
         const root = await createTestTmpRoot("outline-material", "writer-material-selection");
         try {
-            const {snapshot, request, chapterId, chapterNode} = await fixture();
-            const context = readWriterOutlineContext(snapshot, request);
+            const {snapshot, request, chapterId} = await fixture();
+            const context = readWriterChapterContext(snapshot, request);
             const material = join(root, "lorebook/people/hero.md");
             await mkdir(dirname(material), {recursive: true});
             await writeFile(material, "角色设定", "utf8");
             const result = await readSelectedWriterMaterials(absoluteFsPath(root), context, ["lorebook/people/hero.md"]);
             expect(result).toEqual([{path: "lorebook/people/hero.md", content: "角色设定",
-                contentHash: contentHash("角色设定"), sources: [{nodeId: chapterNode, entryId: chapterId,
-                    entryVersion: 1, entryContentHash: context.nodes[1]!.contentHash,
+                contentHash: contentHash("角色设定"), sources: [{entryId: chapterId,
+                    entryVersion: 1, entryContentHash: context.chapter.contentHash,
                     entryPath: snapshot.entries.find(({value}) => value.id === chapterId)!.path, field: "materialRefs"}]}]);
             await expect(readSelectedWriterMaterials(absoluteFsPath(root), context, ["lorebook/people/secret.md"]))
                 .rejects.toThrow(/正式/);
@@ -208,7 +284,7 @@ describe("正式线路素材索引按需读取", () => {
         const root = await createTestTmpRoot("outline-material", "writer-material-security");
         try {
             const {snapshot, request} = await fixture();
-            const context = readWriterOutlineContext(snapshot, request);
+            const context = readWriterChapterContext(snapshot, request);
             const material = join(root, "lorebook/people/hero.md");
             await mkdir(dirname(material), {recursive: true});
             await expect(readSelectedWriterMaterials(absoluteFsPath(root), context, ["lorebook/people/hero.md"]))

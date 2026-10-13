@@ -1,0 +1,83 @@
+{
+  "repository": "https://github.com/SillyTavern/SillyTavern",
+  "revision": "06bde939fb1e9c4c8d8641d810f0a916b5bce127",
+  "license": "AGPL-3.0-or-later",
+  "files": [
+    {
+      "source": "public/scripts/macros/engine/MacroLexer.js",
+      "sha256": "b213046d93b21a4a024b97145628f1f7c25d759578e64fbbf1605f30fc636d08"
+    },
+    {
+      "source": "public/scripts/macros/engine/MacroParser.js",
+      "sha256": "e0f94a641c4fd7ec41e75c363303e56f34f297959413f419f9328058c4221f11"
+    },
+    {
+      "source": "public/scripts/macros/engine/MacroCstWalker.js",
+      "sha256": "52e9fd2af42d6b54dfbd7ce9e8dc12390e210d4a4921fed55c8a589292cdb766"
+    },
+    {
+      "source": "public/scripts/macros/engine/MacroRegistry.js",
+      "sha256": "d02328f1886e896d328a5603b9a135ebaf68fd0746070e2634b697857de283f2"
+    },
+    {
+      "source": "public/scripts/macros/engine/MacroEngine.js",
+      "sha256": "267a4f8dea81854b825aaf0423d90a0a9d48d3a123ea118bbac11c9ca5121c4b"
+    },
+    {
+      "source": "public/scripts/macros/engine/MacroFlags.js",
+      "sha256": "dfa56918fdc78648baad8343fba77d98d7bf80aec244d4ac97d4a77952cb767c"
+    },
+    {
+      "source": "public/scripts/macros/definitions/core-macros.js",
+      "sha256": "a45ced11240d0174b75f1cc31a17c4670236e96be92a7d2264cf9a0802c37a7f"
+    },
+    {
+      "source": "public/scripts/macros/definitions/variable-macros.js",
+      "sha256": "ea6ce2cc4595440c55e7921147cff1a17004236241ad5add4a84d82372ed179c"
+    },
+    {
+      "source": "public/scripts/macros/definitions/env-macros.js",
+      "sha256": "14ff92d8ee9fe12d3ded8914b714cea239342d458dbe6f5be32f00c6d2f1da58"
+    },
+    {
+      "source": "public/scripts/macros/definitions/time-macros.js",
+      "sha256": "cee858a3549285f2b4239c8941b54eb02863bea0dbc8ccfc07aec40ba83f3e06"
+    },
+    {
+      "source": "public/scripts/macros/definitions/chat-macros.js",
+      "sha256": "0e5c005533b64e8a93bc0cff4e58bc33a9710db49b5cb279b2e1451e9d31f4e0"
+    }
+  ],
+  "hostSources": [
+    {
+      "source": "public/scripts/utils.js",
+      "sha256": "2a2cfe240d5a84ce2e09ba053db6c0c71473b6406173f614f3521d89f50ada61"
+    },
+    {
+      "source": "public/scripts/variables.js",
+      "sha256": "92e1bfa793e6072c2daeecdbb6d7429faf990e251bfc5f8d97c0ba7088a1282a"
+    },
+    {
+      "source": "public/script.js",
+      "sha256": "955c603d0bad84bac5a716f0818d85c2543e44d4c43878e0d63ef1e55ca91855"
+    }
+  ],
+  "legacySlices": [
+    {
+      "source": "public/scripts/macros.js",
+      "lines": [
+        315,
+        715
+      ],
+      "sha256": "1926c394e22a35827f594a4c4bfb044ed4c80dcc911680875991a880f8e53f11"
+    },
+    {
+      "source": "public/scripts/variables.js",
+      "lines": [
+        238,
+        261
+      ],
+      "sha256": "92e1bfa793e6072c2daeecdbb6d7429faf990e251bfc5f8d97c0ba7088a1282a"
+    }
+  ]
+}

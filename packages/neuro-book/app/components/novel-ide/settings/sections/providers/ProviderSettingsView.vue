@@ -6,7 +6,7 @@ import ModelLibraryDialog from "./components/ModelLibraryDialog.vue";
 import ModelProviderDetail from "./components/ModelProviderDetail.vue";
 import ModelProviderRail from "./components/ModelProviderRail.vue";
 import NovelIdeModelEditDialog from "./components/NovelIdeModelEditDialog.vue";
-import {parseDraftInteger, parseModelInput, parseModelReasoning} from "./provider-settings-draft";
+import {alignProviderModelApis, parseDraftInteger, parseModelInput, parseModelReasoning} from "./provider-settings-draft";
 import type {ModelSettingsDraft, ModelSettingsModelDraft, ModelSettingsProviderDraft} from "./provider-settings-draft";
 import type {ProviderSettingsViewEmits, ProviderSettingsViewProps} from "./ProviderSettingsView.types";
 
@@ -30,7 +30,8 @@ function patchDraft(patch: Partial<ModelSettingsDraft>): void {
 
 /** 详情里的字段改动以整份 Provider 草稿回来：按 localKey 换掉对应项，其它 Provider 不动。 */
 function replaceProvider(provider: ModelSettingsProviderDraft): void {
-    patchDraft({providers: props.draft.providers.map((item) => item.localKey === provider.localKey ? provider : item)});
+    const normalizedProvider = alignProviderModelApis(provider);
+    patchDraft({providers: props.draft.providers.map((item) => item.localKey === provider.localKey ? normalizedProvider : item)});
 }
 
 function toggleGroup(group: string): void {

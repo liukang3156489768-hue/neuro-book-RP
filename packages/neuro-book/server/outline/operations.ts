@@ -15,6 +15,10 @@ export type PlanningObjectImpact = Readonly<{
     references: readonly Readonly<{sourceFile: string; relation: string; sourceId?: string}>[];
     /** 线路图中引用此条目的节点（删除后会失效） */
     affectedGraphNodes: readonly Readonly<{graphId: OutlineId; nodeId: OutlineId; planId: string}>[];
+    /** 仍以该条目为总纲的方案；非空时不能删除（方案不能没有总纲）。 */
+    usedByPlanIds: readonly string[];
+    /** 删除会影响的方案：以它为总纲的方案，以及挂载了被级联删除条目的方案。 */
+    affectedPlanIds: readonly string[];
     canDeleteObject: boolean;
     /** 级联删除的总数（包括自身） */
     cascadeCount: number;
@@ -38,6 +42,8 @@ export function inspectPlanningObject(snapshot: PlanningSnapshot, targetId: Outl
             children: [],
             references: [],
             affectedGraphNodes: [],
+            usedByPlanIds: [],
+            affectedPlanIds: [],
             canDeleteObject: false,
             cascadeCount: 0
         };
@@ -109,9 +115,19 @@ export function inspectPlanningObject(snapshot: PlanningSnapshot, targetId: Outl
         }
     }
 
-    // 总纲、卷纲、章节、细纲、伏笔、线路都可以直接删除
-    // 容器条目会级联删除子条目
-    const canDeleteObject = true;
+    // 容器条目会级联删除子条目；方案不能没有总纲，所以仍被方案使用的总纲先要让方案改用别的总纲或删除方案。
+    const cascadeIds = new Set<OutlineId>();
+    const collectCascade = (id: OutlineId) => {
+        cascadeIds.add(id);
+        for (const child of snapshot.entries) if (child.value.parentId === id && !cascadeIds.has(child.value.id)) collectCascade(child.value.id);
+    };
+    collectCascade(targetId);
+    const usedByPlanIds = entryKind === "total"
+        ? snapshot.manifest.plans.filter((plan) => plan.totalId === targetId).map((plan) => plan.id) : [];
+    const affectedPlanIds = snapshot.manifest.plans
+        .filter((plan) => usedByPlanIds.includes(plan.id) || plan.placements.some((place) => cascadeIds.has(place.entryId)))
+        .map((plan) => plan.id);
+    const canDeleteObject = usedByPlanIds.length === 0;
 
     return {
         targetId,
@@ -120,6 +136,8 @@ export function inspectPlanningObject(snapshot: PlanningSnapshot, targetId: Outl
         children,
         references,
         affectedGraphNodes,
+        usedByPlanIds,
+        affectedPlanIds,
         canDeleteObject,
         cascadeCount
     };
@@ -143,8 +161,9 @@ export function preparePlanningObjectDeletionFromSnapshot(
 ): PlanningPublishInput {
     const impact = inspectPlanningObject(snapshot, targetId);
 
-    if (!impact.canDeleteObject || !impact.objectFile) {
-        throw new Error("对象不存在");
+    if (!impact.objectFile) throw new Error("对象不存在");
+    if (impact.usedByPlanIds.length > 0) {
+        throw new Error("总纲仍被方案使用，请先让这些方案改用其他总纲或删除这些方案");
     }
 
     if (impact.entryKind === "total" && !confirmedTotal) {
@@ -180,7 +199,6 @@ export function preparePlanningObjectDeletionFromSnapshot(
     const newManifest = {
         ...manifest,
         revision: manifest.revision + 1,
-        totalId: manifest.totalId === targetId ? null : manifest.totalId,
         entries: manifest.entries.filter((item) => !allDeleteIds.has(item.id)),
         foreshadowing: manifest.foreshadowing.filter((item) => !allDeleteIds.has(item.id)),
         lines: manifest.lines.filter((item) => !allDeleteIds.has(item.id)),
@@ -221,7 +239,7 @@ export function inspectPlanningPlacement(snapshot: PlanningSnapshot, planId: str
     return {
         planId, targetId, sourceFile: "outline/manifest.yaml", objectFileRemains: true,
         childReferences, blockingFixedLineIds, graphNodeIds,
-        canRemovePlacement: childReferences.length === 0 && snapshot.manifest.totalId !== targetId
+        canRemovePlacement: childReferences.length === 0 && plan.totalId !== targetId
             && graphNodeIds.length === 0,
     };
 }
@@ -232,7 +250,7 @@ export async function preparePlanningPlacementRemoval(
     const snapshot = await readPlanningSnapshot(options);
     const impact = inspectPlanningPlacement(snapshot, planId, targetId);
     if (impact.childReferences.length > 0) throw new Error("方案关系存在子级，必须先处理删除影响");
-    if (snapshot.manifest.totalId === targetId) throw new Error("方案不能移除共享的唯一总纲根引用");
+    if (snapshot.manifest.plans.find((item) => item.id === planId)?.totalId === targetId) throw new Error("方案不能移除自己的总纲根引用");
     if (impact.graphNodeIds.length > 0) throw new OutlineLibraryError("方案线路图仍有节点关联该条目，请先改为空节点或删除节点");
     return {impact, publish: {expectedManifestRevision: snapshot.manifest.revision, mutations: [
         {relativePath: "outline/manifest.yaml", content: serializeManifest({
@@ -253,11 +271,12 @@ export type PlanningPlanImpact = Readonly<{
     /** 随方案一起删除的线路图与草稿线路；它们只属于这个方案。 */
     graphId: OutlineId | null;
     draftLineIds: readonly OutlineId[];
-    objectFilesRemain: true;
+    /** 专属条目会随方案级联删除，共享条目继续保留。 */
+    objectFilesRemain: false;
     canRemovePlan: boolean;
 }>;
 
-/** 移除方案解除条目关系并删除其线路图与草稿线路；固定线路须先重开，不能随方案静默消失。 */
+/** 删除方案及其专属条目树；共享条目保留，固定线路须先重开。 */
 export function inspectPlanningPlan(snapshot: PlanningSnapshot, planId: string): PlanningPlanImpact {
     const plan = snapshot.manifest.plans.find(({id}) => id === planId);
     if (!plan) throw new OutlineLibraryError("方案链不存在");
@@ -270,15 +289,37 @@ export function inspectPlanningPlan(snapshot: PlanningSnapshot, planId: string):
     return {planId, sourceFile: "outline/manifest.yaml", placementIds, exclusiveEntryIds, blockingFixedLineIds,
         graphId: findPlanGraph(snapshot, planId)?.value.id ?? null,
         draftLineIds: lines.filter(({value}) => !value.fixed).map(({value}) => value.id),
-        objectFilesRemain: true, canRemovePlan: blockingFixedLineIds.length === 0};
+        objectFilesRemain: false, canRemovePlan: blockingFixedLineIds.length === 0};
 }
 
 export function preparePlanningPlanRemoval(snapshot: PlanningSnapshot, planId: string): PlanningPublishInput {
     const impact = inspectPlanningPlan(snapshot, planId);
     if (!impact.canRemovePlan) throw new OutlineLibraryError("方案仍有固定线路，请先重开线路");
+    const otherIds = new Set(snapshot.manifest.plans.filter(({id}) => id !== planId)
+        .flatMap(({placements}) => placements.map(({entryId}) => entryId)));
+    const deleteIds = new Set<OutlineId>();
+    const collectExclusiveTree = (id: OutlineId): void => {
+        if (otherIds.has(id) || deleteIds.has(id)) return;
+        deleteIds.add(id);
+        for (const child of snapshot.entries) {
+            if (child.value.parentId === id) collectExclusiveTree(child.value.id);
+        }
+    };
+    for (const id of impact.exclusiveEntryIds) collectExclusiveTree(id);
+
     const removed = [...snapshot.graphs, ...snapshot.lines]
         .filter(({value}) => value.planId === planId)
         .map(({path, contentHash, value}) => ({path, contentHash, id: value.id}));
-    return buildPlanningWrite(snapshot, {removed, manifest: {...snapshot.manifest,
-        plans: snapshot.manifest.plans.filter(({id}) => id !== planId)}});
+    const entryMutations = snapshot.entries.filter(({value}) => deleteIds.has(value.id))
+        .map(({path, contentHash}) => ({relativePath: path, content: null, expectedHash: contentHash}));
+    const manifest = {
+        ...snapshot.manifest,
+        plans: snapshot.manifest.plans.filter(({id}) => id !== planId),
+        entries: snapshot.manifest.entries.filter(({id}) => !deleteIds.has(id)),
+    };
+    const graphAndLineWrite = buildPlanningWrite(snapshot, {removed, manifest});
+    return {
+        expectedManifestRevision: graphAndLineWrite.expectedManifestRevision,
+        mutations: [...entryMutations, ...graphAndLineWrite.mutations],
+    };
 }

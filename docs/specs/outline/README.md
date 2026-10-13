@@ -4,6 +4,8 @@
 
 ## 文档列表
 
+- [规划素材运用与改编](material-adaptation.md)：角色与笔记按需读取、对象权限、按方案记录及章节来源定位，状态 planned。
+
 ### [outline-entry-templates.md](./outline-entry-templates.md)
 **大纲条目内容模板设计**
 
@@ -18,129 +20,44 @@
 - 模板校验规则
 
 **关键约束**：
-- 总纲（total）：全局唯一，1000-3000 字，聚焦宏观结构
+- 总纲（total）：每个方案一个，1000-3000 字，聚焦宏观结构
 - 卷纲（volume）：阶段性规划，800-2000 字，起承转合结构
 - 章节大纲（chapter）：可执行场景，500-1500 字，必需 `materialRefs`/`writingGuidance`/`targetWords`
-- 细纲（detail）：写作指导，需要偏差分析，支持段落级别标注（未来）
+- 细纲（detail）：正文模板与逐场景写作要求，需要偏差分析，包含可选地点、角色资料和服饰小节
 
-**状态**：设计阶段
+**状态**：planned，已获批准；模板与解析已接入，真实生成效果待验收
 
-### [detail-writing-guide-annotation.md](./detail-writing-guide-annotation.md)
-**细纲写作指导标注系统**
+### [旧细纲标注设计](../../../packages/neuro-book/docs/archived/reference/detail-writing-guide-annotation.md)
+**细纲写作指导与段落参考标注（已废弃）**
 
-为细纲编辑器添加段落级别的写作指导和参考文献标注功能。
+2026-10-01 细纲改为正文模板后，段落标注、frontmatter `guides` 与带 `marker` 的段落参考已移除。文件只保留历史取舍。
 
-**核心功能**：
-- 写作指导标注（WritingGuide）：为段落添加结构化约束（字数、视角、情感、语气、节奏等）
-- 参考文献标注（Reference）：关联 lorebook 知识库条目到具体段落
-- 与现有评论（Comment）功能并存，三者共存但用途不同
+### [旧细纲标注性能记录](../../../packages/neuro-book/docs/archived/reference/performance-optimization-notes.md)
+**细纲标注的编辑器性能约束（已废弃）**
 
-**关键设计**：
-- Mark 只存储 `id`，完整元数据存储在组件状态的 Map 中
-- 延迟 frontmatter 同步：只在保存时执行，加载时按需读取
-- 新增 `guides` 和 `detailReferences` frontmatter 字段
-- 不影响不使用标注功能的文档的加载性能
-
-**状态**：设计阶段，性能优化版（2026-09-28）
-
-### [performance-optimization-notes.md](./performance-optimization-notes.md)
-**性能优化笔记**
-
-记录首次实装时遇到的性能问题（文档加载 5 分钟）的根因分析和解决方案。
-
-**核心问题**：
-- ❌ 错误：在 Mark 属性中存储完整元数据（7个字段），导致大量对象创建和序列化
-- ✅ 正确：Mark 只存储 `id`，元数据分离到组件状态
-
-**性能提升**：300倍（5分钟 → <1秒）
-
-**状态**：已完成分析
+记录对象随段落标注一并移除。
 
 ---
 
 ## 现有细纲格式
 
-### OutlineEntry 结构
-
-```typescript
-export type OutlineEntry = Readonly<{
-  schema: "nbook.outline-entry/v2";
-  id: OutlineId;                    // 如 "ol-detail-1"
-  kind: "total" | "volume" | "chapter" | "detail";
-  version: number;
-  status: "draft" | "adopted";
-  title: string;
-  parentId: OutlineId | null;
-  chapterId: OutlineId | null;
-  
-  // 条目级别字段
-  materialRefs?: readonly string[];           // 参考资料路径
-  writingGuidance?: string;                   // 全局写作指导
-  references?: readonly OutlineReference[];   // 条目级别资料清单
-  targetWords?: number;
-  analysis?: DetailAnalysis;                  // 仅 detail
-  
-  body: string;
-}>;
-```
-
-### 条目级别 vs 段落级别
-
-| 层级 | 现有字段 | 新增标注 | 用途 |
-|---|---|---|---|
-| **条目级别** | `writingGuidance` (字符串) | - | 整个细纲的全局指导 |
-| **段落级别** | - | `<guide>` + `guides` 数组 | 每个段落的精细化约束 |
-| **条目级别** | `references` (OutlineReference[]) | - | 整个细纲的资料清单 |
-| **段落级别** | - | `<reference>` + `detailReferences` 数组 | 每个段落关联的 lorebook 条目 |
+细纲的写作信息全部写在正文里，按 [outline-entry-templates.md](./outline-entry-templates.md) 的「细纲」模板书写：章节总览、章节细纲（`## 场景N：名称` 及其字段与小节）、禁止事项。frontmatter 只保留身份、状态、`materialRefs` 与 `analysis`；`writingGuidance`、`references`、`targetWords` 只用于章节大纲。
 
 ---
 
 ## 相关代码位置
 
-**类型定义**：
-- `packages/neuro-book/server/outline/format.ts` - OutlineEntry 类型定义
-- `packages/neuro-book/server/outline/format.ts` - serializeEntryMarkdown / parseEntryMarkdown
-
-**编辑器**：
-- `packages/neuro-book/app/components/markdown-studio/TipTapMarkdownEditor.vue` - 通用 Markdown 编辑器
-- `packages/neuro-book/app/components/markdown-studio/tiptap/Comment.ts` - 现有评论标注参考
-- `packages/neuro-book/app/components/markdown-studio/tiptap/markdown-editor-extensions.ts` - 扩展注册
-
-**待创建**：
-- `packages/neuro-book/app/components/markdown-studio/tiptap/WritingGuide.ts`
-- `packages/neuro-book/app/components/markdown-studio/tiptap/Reference.ts`
-- `packages/neuro-book/app/components/markdown-studio/WritingGuideFormDialog.vue`
-- `packages/neuro-book/app/components/markdown-studio/ReferenceDialog.vue`
-- `packages/neuro-book/app/components/markdown-studio/MarkdownAnnotationPanel.vue`
+- `packages/neuro-book/server/outline/format.ts`：OutlineEntry 类型、`parseEntryMarkdown` / `serializeEntryMarkdown`
+- `packages/neuro-book/shared/outline-detail-structure.ts`：细纲正文模板的解析与结构检查，大纲分析、采用、编辑界面与写作共用
+- `packages/neuro-book/server/outline/writer-context.ts`：正文交接
+- `packages/neuro-book/app/components/novel-ide/outline/OutlineEntryForm.vue`：工作台条目表单；细纲提供插入模板、插入场景与结构问题列表
+- `packages/neuro-book/app/components/novel-ide/outline/OutlineRichTextEditor.vue`、`outline-rich-text.ts`：大纲库与伏笔库共用的富文本正文与伏笔标记浮动菜单
+- `packages/neuro-book/app/composables/useOutlineAutosave.ts`：大纲库与伏笔库的自动保存与版本冲突判断
+- `packages/neuro-book/app/components/markdown-studio/tiptap/OutlineAnchor.ts`：通用编辑器中的标注 Mark，只用于高亮和无损往返
 
 ---
 
-## 实施顺序
+## 待完成
 
-按照 [detail-writing-guide-annotation.md](./detail-writing-guide-annotation.md) 第八章的实施计划：
-
-1. **阶段 1**：基础架构（WritingGuide.ts、Reference.ts）
-2. **阶段 2**：UI 组件（表单对话框、标注管理面板）
-3. **阶段 3**：后端支持（lorebook tree API、校验 API）
-4. **阶段 4**：AI 局部重写（可选）
-5. **阶段 5**：集成测试与文档
-
-**总计**：约 9-13 天
-
----
-
-## 注意事项
-
-⚠️ **性能关键**：
-- 必须遵循"Mark 只存储 id"的设计原则
-- 加载时不能从 frontmatter 同步元数据到 Mark 属性
-- 实施前必须通过性能优化检查清单
-
-⚠️ **字段命名**：
-- 新增的段落级别参考文献使用 `detailReferences` 字段
-- 不要与现有的条目级别 `references` 字段冲突
-
-⚠️ **向后兼容**：
-- 不影响不使用标注功能的文档
-- 保留现有的 `writingGuidance` 和 `references` 字段
-- 评论功能（Comment）完全不受影响
+- 浏览器验收：大纲库与伏笔库的直接编辑、自动保存和富文本标注（插入、定位、删除），桌面与 `390×844` 布局，浅色与深色主题
+- 在界面中选择 lorebook 条目（延后，当前手填路径）

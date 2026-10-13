@@ -1,5 +1,5 @@
 import {contentHash, createStableId, parseEntryMarkdown, serializeEntryMarkdown, serializeManifest, stableFileName, type OutlineId} from "./format";
-import {OutlineLibraryError, type EntryMetadataPatch} from "./library";
+import {OutlineLibraryError, assertMaterialUpdateMaintenance, forkPlanTotal, type EntryMetadataPatch} from "./library";
 import {readPlanningSnapshot, type PlanningPublishInput} from "./index";
 import type {OutlineRepositoryOptions} from "./repository";
 
@@ -12,9 +12,13 @@ export async function preparePlanningFork(
 ): Promise<PlanningFork> {
     const snapshot = await readPlanningSnapshot(options);
     const source = snapshot.entries.find((item) => item.value.id === input.sourceId);
-    if (!source || source.value.kind === "total") throw new OutlineLibraryError("总纲不可分叉或源条目不存在");
+    if (!source) throw new OutlineLibraryError("源条目不存在");
     const plan = snapshot.manifest.plans.find((item) => item.id === input.planId);
     if (!plan?.placements.some((item) => item.entryId === input.sourceId)) throw new OutlineLibraryError("目标方案未引用源条目");
+    if (source.value.kind === "total") {
+        const change = forkPlanTotal(snapshot, plan.id, input.title, input.body, input);
+        return {id: change.entryId!, path: change.publish.mutations[0]!.relativePath, publish: change.publish};
+    }
     if (snapshot.manifest.plans.filter((item) => item.placements.some((place) => place.entryId === input.sourceId)).length < 2) {
         throw new OutlineLibraryError("条目尚未跨方案共享，无需写时分叉");
     }
@@ -27,14 +31,17 @@ export async function preparePlanningFork(
     if (snapshot.graphs.some(({value}) => value.planId === plan.id && value.nodes.some(({entryId}) => entryId === source.value.id))) {
         throw new OutlineLibraryError("本方案线路图仍有节点关联共享条目；请先将节点改为空节点或关联其他条目，再分叉");
     }
+    assertMaterialUpdateMaintenance(source.value, input.body, input.materialUpdates);
     const id = createStableId("ol");
     const path = `outline/entries/${stableFileName(title, id, "md")}`;
     // 分析报告绑定原条目和方案上下文，分叉后的新 ID 与草稿不能继承。
-    const content = serializeEntryMarkdown({...source.value, id, version: 0, status: "draft", analysis: undefined, title, body: input.body,
+    const content = serializeEntryMarkdown({...source.value, id, version: 0, status: "draft", analysis: undefined, basis: undefined, title, body: input.body,
         materialRefs: input.materialRefs === undefined ? source.value.materialRefs : input.materialRefs ?? undefined,
         writingGuidance: input.writingGuidance === undefined ? source.value.writingGuidance : input.writingGuidance ?? undefined,
         references: input.references === undefined ? source.value.references : input.references ?? undefined,
         targetWords: input.targetWords === undefined ? source.value.targetWords : input.targetWords ?? undefined,
+        adaptation: input.adaptation === undefined ? source.value.adaptation : input.adaptation ?? undefined,
+        materialUpdates: input.materialUpdates === undefined ? source.value.materialUpdates : input.materialUpdates ?? undefined,
     });
     parseEntryMarkdown(content, path);
     const manifest = {

@@ -6,7 +6,7 @@ import {InspirationConversationSchema, InspirationConversationSummarySchema, typ
 import type {InspirationStoragePort} from "./service";
 import type {WorkspaceFileTarget} from "nbook/server/workspace-files/workspace-file-target";
 import {withProjectTargetMutation, type ProjectDataPlaneHandles} from "nbook/server/workspace-files/project-open-guard";
-import {readWorkspaceTextFile, workspacePathExists, renderMarkdownDocument, writeWorkspaceTextFile} from "nbook/server/workspace-files/workspace-files";
+import {deleteWorkspacePath, readWorkspaceTextFile, workspacePathExists, renderMarkdownDocument, writeWorkspaceTextFile} from "nbook/server/workspace-files/workspace-files";
 import {createWorkspaceContentFrontmatterDefaults} from "nbook/server/workspace-files/content-node-schema";
 import {createWorkspaceFileTracked, USER_LOCAL_ACTOR} from "nbook/server/workspace-history/tracked-workspace-files";
 
@@ -30,6 +30,49 @@ export function createInspirationStorage(target: WorkspaceFileTarget): Inspirati
     const create = async (handles: ProjectDataPlaneHandles | undefined, path: string, content: string) => {
         await createWorkspaceFileTracked({target, history: handles?.history, filePath: path, content, actor: USER_LOCAL_ACTOR});
     };
+    const removeIfPresent = async (relativePath: string, recursive: boolean) => {
+        if (await workspacePathExists(target.root, relativePath)) await deleteWorkspacePath(target.root, relativePath, recursive);
+    };
+    const isLegacyDraft = (value: unknown): boolean => {
+        if (typeof value !== "object" || value === null || !Array.isArray((value as {artifacts?: unknown}).artifacts)) return false;
+        return (value as {artifacts: unknown[]}).artifacts.some(artifact => typeof artifact === "object" && artifact !== null && "source" in artifact);
+    };
+    const cleanupLegacyExtractionData = async (): Promise<void> => withInspirationLock(`${target.root}/legacy-extraction-cleanup`, () => withProjectTargetMutation(target, async () => {
+        const conversationDirectory = path.join(target.root, ".nbook", "inspiration", "conversations");
+        const draftDirectory = path.join(target.root, ".nbook", "inspiration");
+        const legacyDraftIds = new Set<string>();
+        let draftEntries: string[] = [];
+        try { draftEntries = await readdir(draftDirectory); } catch (error: unknown) {
+            if (!(typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")) throw error;
+        }
+        for (const entry of draftEntries.filter(item => /^[0-9a-f-]{36}$/iu.test(item))) {
+            try {
+                const raw = JSON.parse(await readWorkspaceTextFile(target.root, `.nbook/inspiration/${entry}/draft.json`));
+                if (isLegacyDraft(raw)) legacyDraftIds.add(entry);
+            } catch (error: unknown) {
+                if (!(typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")) throw error;
+            }
+        }
+        let conversationEntries: string[] = [];
+        try { conversationEntries = await readdir(conversationDirectory); } catch (error: unknown) {
+            if (!(typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")) throw error;
+        }
+        for (const file of conversationEntries.filter(item => /^[0-9a-f-]{36}\.json$/iu.test(item))) {
+            const id = file.slice(0, -5);
+            const relative = conversationPath(id);
+            const raw = JSON.parse(await readWorkspaceTextFile(target.root, relative)) as {messages?: Array<Record<string, unknown>>; updatedAt?: string};
+            const messages = Array.isArray(raw.messages) ? raw.messages : [];
+            const hasExtract = messages.some(message => message.kind === "extract");
+            const removedDraftIds = new Set(messages.filter(message => message.kind === "extract" || (typeof message.draftId === "string" && legacyDraftIds.has(message.draftId)))
+                .map(message => typeof message.draftId === "string" ? message.draftId : null).filter((draftId): draftId is string => draftId !== null));
+            if (!hasExtract && !removedDraftIds.size) continue;
+            const kept = messages.filter(message => message.kind !== "extract" && !(typeof message.draftId === "string" && removedDraftIds.has(message.draftId)));
+            for (const draftId of removedDraftIds) legacyDraftIds.add(draftId);
+            if (!kept.length) await removeIfPresent(relative, false);
+            else await writeWorkspaceTextFile(target.root, relative, JSON.stringify({...raw, messages: kept, updatedAt: new Date().toISOString()}));
+        }
+        for (const draftId of legacyDraftIds) await removeIfPresent(`.nbook/inspiration/${draftId}`, true);
+    }));
     return {
         async readDraft(id) {
             try { return JSON.parse(await readWorkspaceTextFile(target.root, draftPath(id))); }
@@ -69,6 +112,7 @@ export function createInspirationStorage(target: WorkspaceFileTarget): Inspirati
             return conversations.map(conversation => InspirationConversationSummarySchema.parse({id: conversation.id, title: conversation.title, createdAt: conversation.createdAt, updatedAt: conversation.updatedAt, archivedAt: conversation.archivedAt, messageCount: conversation.messages.length}))
                 .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
         },
+        cleanupLegacyExtractionData,
         async updateConversation(conversation: InspirationConversationDto) {
             return withInspirationLock(`${target.root}/conversation/${conversation.id}`, () => withProjectTargetMutation(target, async () => {
                 if (!await workspacePathExists(target.root, conversationPath(conversation.id))) {
@@ -88,7 +132,9 @@ export function createInspirationStorage(target: WorkspaceFileTarget): Inspirati
                     const path = `lorebook/${original.category}/inspiration-${original.id}/index.md`;
                     const frontmatter = createWorkspaceContentFrontmatterDefaults({title: edited.title, type: original.category, status: "active"});
                     frontmatter.governance = {source: "generated", review: "reviewed"};
-                    frontmatter.ext = {inspiration: {draftId: draft.id, revision: draft.revision, artifactId: original.id, sessionId: original.sessionId, source: original.source}};
+                    frontmatter.ext = {inspiration: {draftId: draft.id, revision: draft.revision, artifactId: original.id, sessionId: original.sessionId,
+                        ...(draft.creationMode ? {creationMode: draft.creationMode} : {}),
+                        ...(draft.materialSources?.length ? {materialSources: draft.materialSources.map(({content: _content, ...source}) => source)} : {})}};
                     const content = renderMarkdownDocument(frontmatter, edited.content);
                     const confirmationPath = `.nbook/inspiration/${draft.id}/confirmed/${original.id}.json`;
                     const receiptPath = `.nbook/inspiration/${draft.id}/saved/${original.id}.json`;

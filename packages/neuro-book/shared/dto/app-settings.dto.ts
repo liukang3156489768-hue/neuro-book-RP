@@ -236,6 +236,7 @@ export const ModelLibraryEntryDtoSchema = z.object({
 export const ProviderTemplateDtoSchema = z.object({
     id: ProviderIdSchema,
     name: z.string().trim().min(1),
+    description: z.string().trim().optional(),
     baseUrl: z.string().trim(),
     defaultModelApi: SupportedPiApiSchema.nullable(),
     models: z.array(ConfiguredModelDtoSchema).default([]),

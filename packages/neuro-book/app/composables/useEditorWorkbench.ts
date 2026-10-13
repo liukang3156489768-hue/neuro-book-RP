@@ -55,11 +55,18 @@ export type EditorGroupPresentation = Readonly<{
     actions: readonly EditorAction[];
     busy: boolean;
     diagnosis: string | null;
+    /** 活动文档被外部流程锁定时的说明；此时视图只读。 */
+    notice: string | null;
 }>;
 
 export function useEditorWorkbench(options: {
     bindings: BuiltinEditorBindings;
     chooseClose(title: string): Promise<string>;
+    /**
+     * 文档被页面外的流程占用（如写作运行正在改写这份正文）时返回说明，编辑器随之只读。
+     * 锁只挡视图输入；落盘与重读仍走 Store 的磁盘同步。
+     */
+    lockReasonOf?(path: string): string | null;
 }) {
     const store = useNovelIdeStore();
     const config = useEditorConfiguration();
@@ -114,6 +121,8 @@ export function useEditorWorkbench(options: {
     /** 逐组读取状态：每个组读它自己的登记，活动组与后台组同一份判据。 */
     const groupIsLoading = (groupId: string): boolean => Boolean(store.editorGroupLoading[groupId]);
     const groupErrorOf = (groupId: string): string | null => store.editorGroupErrors[groupId] ?? null;
+    const lockReasonOf = (path: string): string | null => (path ? options.lockReasonOf?.(path) ?? null : null);
+    const groupIsReadonly = (groupId: string): boolean => groupIsLoading(groupId) || lockReasonOf(activePathOf(groupId)) !== null;
 
     const documentTargetOf = (groupId: string): EditorDocumentTarget | null => {
         const path = activePathOf(groupId);
@@ -131,7 +140,7 @@ export function useEditorWorkbench(options: {
             content: buffer.content,
             contentRevision: buffer.contentRevision,
             languageId: resolution.languageId,
-            readonly: groupIsLoading(groupId),
+            readonly: groupIsReadonly(groupId),
         };
     }
 
@@ -186,6 +195,7 @@ export function useEditorWorkbench(options: {
             actions: runtime.actions,
             busy,
             diagnosis: diagnoseOf(groupId),
+            notice: lockReasonOf(activePathOf(groupId)),
         };
     };
 
@@ -197,7 +207,7 @@ export function useEditorWorkbench(options: {
         const runtime = runtimes[groupId];
         const target = documentTargetOf(groupId);
         if (!runtime?.handle || !target) return null;
-        return {target, handle: runtime.handle, readonly: groupIsLoading(groupId)};
+        return {target, handle: runtime.handle, readonly: groupIsReadonly(groupId)};
     });
 
     /** 视图实例的回执入口：Store 判定 accepted/conflict/stale，这里补上视图层事实（语言/只读）。 */
@@ -212,7 +222,7 @@ export function useEditorWorkbench(options: {
                 content: outcome.snapshot.content,
                 contentRevision: outcome.snapshot.contentRevision,
                 languageId: resolution?.languageId ?? "plaintext",
-                readonly: groupIsLoading(groupId),
+                readonly: groupIsReadonly(groupId),
             },
         };
     }

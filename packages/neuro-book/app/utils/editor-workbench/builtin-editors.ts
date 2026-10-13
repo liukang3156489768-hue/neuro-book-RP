@@ -27,6 +27,9 @@ export type BuiltinEditorBindings = {
         enableQuickTriggers(): boolean;
         openFrontmatterProfile(kind: FrontmatterProfileKind): void;
         addInlineAiReference(reference: InlineEditReference): void;
+        /** 这份文档能否把选区交给写作会话改写（通常是已关联章节的正文）。 */
+        canRewriteSelection(target: EditorDocumentTarget): boolean;
+        rewriteSelection(target: EditorDocumentTarget, text: string): void;
     };
 };
 
@@ -48,9 +51,11 @@ export function createBuiltinEditorContributions(bindings: BuiltinEditorBindings
             openReference: bindings.markdown.openReference, resolveReference: bindings.markdown.resolveReference,
             inlineAiReferences: bindings.markdown.inlineAiReferences(), inlineAiHighlightReference: bindings.markdown.inlineAiHighlightReference(),
             enableQuickTriggers: bindings.markdown.enableQuickTriggers(),
+            canRewriteSelection: bindings.markdown.canRewriteSelection(props.document.target),
             onSave: events.save, onFocus: events.focus, onActions: events.actions, onReady: bind,
             "onOpen-frontmatter-profile": bindings.markdown.openFrontmatterProfile,
             "onInline-ai-reference": bindings.markdown.addInlineAiReference,
+            "onRewrite-selection": bindings.markdown.rewriteSelection,
         }),
     }];
 }

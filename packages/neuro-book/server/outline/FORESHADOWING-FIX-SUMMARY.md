@@ -116,6 +116,7 @@ where:
 ### 重要映射
 
 在 Agent 工具中：
+- `action: "plant"` → 标记中使用 `action="plant"`
 - `action: "strengthen"` → 标记中使用 `action="reinforce"`
 - `action: "resolve"` → 标记中使用 `action="recover"`
 

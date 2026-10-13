@@ -1,5 +1,6 @@
 import {describe, expect, it} from "vitest";
 import {
+    alignProviderModelApis,
     buildAgentVisibleModels,
     buildProviderRequestOptions,
     splitProviderRequestOptions,
@@ -12,10 +13,63 @@ import {
     removeIncompleteDisabledModels,
     modelContractInput,
     type ContractSettingsDraft,
+    type ModelSettingsProviderDraft,
 } from "nbook/app/components/novel-ide/settings/sections/providers/provider-settings-draft";
 import type {ModelLibraryEntryDto} from "nbook/shared/dto/app-settings.dto";
 
+function createModelDraft(overrides: Partial<ModelSettingsProviderDraft["models"][number]> = {}): ModelSettingsProviderDraft["models"][number] {
+    return {
+        localKey: "model-1",
+        name: "Model",
+        id: "model-1",
+        group: "test",
+        enabled: true,
+        api: "openai-completions",
+        reasoning: "false",
+        input: "text",
+        contextWindowTokens: "8192",
+        maxTokens: "1024",
+        cost: {input: "", output: "", cacheRead: "", cacheWrite: "", tiers: []},
+        compat: "",
+        headers: "",
+        thinkingLevelMap: "",
+        ...overrides,
+    };
+}
+
+function createProviderDraft(overrides: Partial<ModelSettingsProviderDraft> = {}): ModelSettingsProviderDraft {
+    return {
+        localKey: "provider-1",
+        id: "provider-1",
+        name: "Provider",
+        enabled: true,
+        modelApi: "openai-completions",
+        options: {
+            apiKey: "",
+            apiKeyConfigured: false,
+            apiKeyMaskedValue: null,
+            apiKeyCleared: false,
+            baseURL: "https://example.com/v1",
+            proxy: "",
+            timeoutMs: "",
+            maxRetries: "",
+            requestOptions: "",
+        },
+        models: [createModelDraft()],
+        ...overrides,
+    };
+}
+
 describe("model settings draft contract", () => {
+    it("Provider 默认协议变化时只对齐整组同源模型", () => {
+        const provider = createProviderDraft({modelApi: "anthropic-messages", models: [createModelDraft({api: "openai-completions"})]});
+        const aligned = alignProviderModelApis(provider);
+        const mixed = {...provider, models: [createModelDraft({api: "openai-completions"}), createModelDraft({api: "anthropic-messages"})]};
+
+        expect(aligned.models[0]?.api).toBe("anthropic-messages");
+        expect(alignProviderModelApis(mixed)).toBe(mixed);
+    });
+
     it("旧 Provider 配置把 maxRetries 拆到独立字段并保留其他高级参数", () => {
         expect(splitProviderRequestOptions({maxRetries: 0, maxRetryDelayMs: 3_000, metadata: {tenant: "test"}})).toEqual({
             maxRetries: "0",

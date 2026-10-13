@@ -10,7 +10,7 @@
 
 根节点是可点击的 `label`，内部横向排列视觉 checkbox 和文字列。视觉 checkbox 固定为 18×18px，文字列包含标签和可选的 description；标签很长时文字列可以随父级宽度换行，复选框本身不会被压扁。`390×844` 下不改变结构，描述继续位于标签下方。
 
-真实 `<input type="checkbox">` 是屏幕阅读器可见但视觉隐藏的 peer 元素。视觉层依据 `modelValue` 与 `indeterminate` 显示勾号或短横，并依据 `FormField` 上下文接收 id、required、invalid 和描述关联。
+真实 `<input type="checkbox">` 是屏幕阅读器可见但视觉隐藏的 peer 元素。它的焦点锚点固定在当前 label 内，避免标签位于滚动列表中时浏览器把外层列表滚到隐藏 input 的静态位置。视觉层依据 `modelValue` 与 `indeterminate` 显示勾号或短横，并依据 `FormField` 上下文接收 id、required、invalid 和描述关联。
 
 ## 交互
 

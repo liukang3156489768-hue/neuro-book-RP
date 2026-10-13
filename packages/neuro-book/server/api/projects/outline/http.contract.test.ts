@@ -12,6 +12,7 @@ import {projectWorkspaceRef} from "nbook/server/workspace-files/project-identity
 import {writeProjectManifest} from "nbook/server/workspace-files/project-workspace";
 import type {PlanningSnapshot} from "nbook/server/outline";
 import {contentHash, serializeManifest, type OutlineLineType, type OutlineManifest} from "nbook/server/outline/format";
+import {sceneDetail} from "nbook/server/outline/detail.fixture";
 
 vi.mock("nbook/server/outline/direction-model", () => ({completeDirectionWithModel: vi.fn(async () =>
     JSON.stringify({summary: "需要审阅", deviations: ["时间偏差"], conflicts: ["人物已离场"]}))}));
@@ -63,7 +64,7 @@ describe("Project 大纲规划真实 H3 HTTP 合同", () => {
     const endpoint = (baseUrl: string, segment: string) => `${baseUrl}/${segment}?projectRoot=outline-h3`;
     const projectFile = (relativePath: string) => path.join(workspaceRoot, "outline-h3", relativePath);
 
-    /** 线路测试按 create-total → create-plan → 条目 → 图节点 → 连线 → 线路 → 分析固定 的顺序经真实 HTTP 搭建。 */
+    /** 线路测试按 create-plan（同时创建该方案的总纲）→ 条目 → 图节点 → 连线 → 线路 → 分析固定 的顺序经真实 HTTP 搭建。 */
     function planningClient() {
         const post = (segment: string, body: unknown) => fetch(endpoint(baseUrl, segment), {
             method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(body),
@@ -83,6 +84,11 @@ describe("Project 大纲规划真实 H3 HTTP 合同", () => {
                 expect(response.status, JSON.stringify(result)).toBe(200);
                 await client.read();
                 return result;
+            },
+            /** create-plan 的 entryId 是随方案创建的总纲。 */
+            async createPlan(title: string): Promise<{planId: string; totalId: string}> {
+                const result = await client.library({kind: "create-plan", title});
+                return {planId: result.planId!, totalId: result.entryId!};
             },
             async adoptedChapter(planId: string, parentId: string, title: string, body = title, extra: object = {}): Promise<string> {
                 const entryId = (await client.library({kind: "create-entry", planId, parentId, entryKind: "chapter",
@@ -151,8 +157,7 @@ describe("Project 大纲规划真实 H3 HTTP 合同", () => {
         const client = planningClient();
         expect((await client.post("open", {})).status).toBe(200);
         await client.read();
-        const totalId = (await client.library({kind: "create-total", title: "总纲", body: "开篇"})).entryId!;
-        const planId = (await client.library({kind: "create-plan", title: "甲方案"})).planId!;
+        const {planId, totalId} = await client.createPlan("甲方案");
         const chapterId = (await client.library({kind: "create-entry", planId, parentId: totalId,
             entryKind: "chapter", title: "第一章", body: "相遇"})).entryId!;
         expect(client.graphOf(planId)).toBeUndefined();
@@ -226,8 +231,7 @@ describe("Project 大纲规划真实 H3 HTTP 合同", () => {
         const client = planningClient();
         expect((await client.post("open", {})).status).toBe(200);
         await client.read();
-        const totalId = (await client.library({kind: "create-total", title: "总纲", body: "起点"})).entryId!;
-        const planId = (await client.library({kind: "create-plan", title: "方案"})).planId!;
+        const {planId, totalId} = await client.createPlan("方案");
         const firstEntry = (await client.library({kind: "create-entry", planId, parentId: totalId,
             entryKind: "chapter", title: "第一章", body: "正文候选"})).entryId!;
         const secondEntry = (await client.library({kind: "create-entry", planId, parentId: totalId,
@@ -271,21 +275,23 @@ describe("Project 大纲规划真实 H3 HTTP 合同", () => {
         const client = planningClient();
         expect((await client.post("open", {})).status).toBe(200);
         await client.read();
-        const totalId = (await client.library({kind: "create-total", title: "总纲", body: "起点"})).entryId!;
-        const planId = (await client.library({kind: "create-plan", title: "方案"})).planId!;
+        const {planId, totalId} = await client.createPlan("方案");
         const legacyPath = "outline/lines/legacy--ln-legacy-http.yaml";
         const legacyBytes = ["schema: nbook.outline-line/v1", "id: ln-legacy-http", "version: 0", "title: 旧固定主线",
             "type: main", "fixed: true", "nodes:", "  - id: nd-origin", `    entryId: ${totalId}`, "    sequence: 0",
             "edges: []", ""].join("\n");
         await fs.mkdir(projectFile("outline/lines"), {recursive: true});
         await fs.writeFile(projectFile(legacyPath), legacyBytes, "utf8");
+        // v1 只有顶层全局 totalId，方案条目不带 totalId；读取时会把它注入每个方案。
         const {graphs: _graphs, ...manifest} = client.snapshot.manifest;
         await fs.writeFile(projectFile("outline/manifest.yaml"), serializeManifest({...manifest, schema: "nbook.outline/v1",
-            revision: manifest.revision + 1,
+            revision: manifest.revision + 1, totalId,
+            plans: manifest.plans.map(({totalId: _planTotalId, ...plan}) => plan),
             lines: [{id: "ln-legacy-http", path: legacyPath, version: 0, contentHash: contentHash(legacyBytes)}],
         } as unknown as OutlineManifest), "utf8");
         await client.read();
-        expect(client.snapshot.manifest).toMatchObject({schema: "nbook.outline/v2", graphs: [], lines: []});
+        expect(client.snapshot.manifest).toMatchObject({schema: "nbook.outline/v3", graphs: [], lines: [],
+            plans: [{id: planId, totalId}]});
         expect(client.snapshot.graphs).toEqual([]);
         expect(client.snapshot.lines).toEqual([]);
         expect((await client.post("inspect-line", {lineId: "ln-legacy-http"})).status).toBe(422);
@@ -295,7 +301,7 @@ describe("Project 大纲规划真实 H3 HTTP 合同", () => {
             expectedContentHash: contentHash(legacyBytes), confirmUpgrade: true})).status).toBe(400);
         const nodeId = (await client.graph("add-graph-node", planId, {column: 0, row: 0, entryId: totalId})).nodeId!;
         const manifestText = await fs.readFile(projectFile("outline/manifest.yaml"), "utf8");
-        expect(manifestText).toContain("nbook.outline/v2");
+        expect(manifestText).toContain("nbook.outline/v3");
         expect(manifestText).not.toContain(legacyPath);
         expect(await fs.readFile(projectFile(legacyPath), "utf8")).toBe(legacyBytes);
         expect(client.graphOf(planId)?.value.nodes).toEqual([{id: nodeId, entryId: totalId, column: 0, row: 0}]);
@@ -310,8 +316,7 @@ describe("Project 大纲规划真实 H3 HTTP 合同", () => {
         const client = planningClient();
         expect((await client.post("open", {})).status).toBe(200);
         await client.read();
-        const totalId = (await client.library({kind: "create-total", title: "总纲", body: "起点"})).entryId!;
-        const planId = (await client.library({kind: "create-plan", title: "方案"})).planId!;
+        const {planId, totalId} = await client.createPlan("方案");
         const start = await client.adoptedChapter(planId, totalId, "第一章", "共同起点");
         const mainEntry = await client.adoptedChapter(planId, totalId, "第二章", "主线推进");
         const branchEntry = await client.adoptedChapter(planId, totalId, "岔路章", "支线岔路");
@@ -323,7 +328,6 @@ describe("Project 大纲规划真实 H3 HTTP 合同", () => {
         const mainId = await client.createLine(planId, "主线", "main", [n1, n2]);
         const branchId = await client.createLine(planId, "支线", "branch", [n1, n3]);
         expect((await client.post("read-fixed-line", client.request(mainId))).status).toBe(422);
-        expect((await client.post("read-writer-context", client.request(mainId))).status).toBe(422);
 
         const firstReport = await client.fix(mainId);
         const fixedRequest = client.request(mainId);
@@ -331,11 +335,6 @@ describe("Project 大纲规划真实 H3 HTTP 合同", () => {
         expect(validResponse.status).toBe(200);
         expect(await validResponse.json()).toMatchObject({nodes: [{nodeId: n1, entryId: start, column: 0, status: "valid"},
             {nodeId: n2, entryId: mainEntry, column: 1, status: "valid"}]});
-        const writerResponse = await client.post("read-writer-context", fixedRequest);
-        expect(writerResponse.status).toBe(200);
-        expect(await writerResponse.json()).toMatchObject({planId, nodes: [{entryId: start, column: 0, body: "共同起点"},
-            {entryId: mainEntry, column: 1, body: "主线推进"}]});
-        expect((await client.post("read-writer-context", {...fixedRequest, expectedRevision: fixedRequest.expectedRevision - 1})).status).toBe(409);
 
         // 固定线路锁住自身节点的格号、条目与线路内相邻连线。
         expect((await client.graphAction("relink-graph-node", planId, {nodeId: n1, entryId: null})).status).toBe(422);
@@ -379,7 +378,6 @@ describe("Project 大纲规划真实 H3 HTTP 合同", () => {
         expect(invalid.status).toBe(200);
         expect(await invalid.json()).toMatchObject({nodes: [{nodeId: n1, entryId: start, status: "red"}, {nodeId: n2}]});
         expect((await client.post("read-fixed-line", client.request(mainId))).status).not.toBe(200);
-        expect((await client.post("read-writer-context", client.request(mainId))).status).not.toBe(200);
         expect((await fetch(endpoint(baseUrl, "snapshot"))).status).not.toBe(200);
     }, 60_000);
 
@@ -426,15 +424,16 @@ describe("Project 大纲规划真实 H3 HTTP 合同", () => {
             return await response.json() as {entryId?: string; planId?: string; transactionId: string};
         };
         expect((await post("open", {})).status).toBe(200);
-        const totalId = (await action({kind: "create-total", title: "总纲", body: "冲突铺垫"})).entryId!;
-        const planId = (await action({kind: "create-plan", title: "主方案"})).planId!;
+        const created = await action({kind: "create-plan", title: "主方案"});
+        const planId = created.planId!;
+        const totalId = created.entryId!;
         const chapterId = (await action({kind: "create-entry", planId, parentId: totalId,
             entryKind: "chapter", title: "第一章", body: "相遇"})).entryId!;
         const chapter = (await snapshot()).entries.find(({value}) => value.id === chapterId)!;
         await action({kind: "adopt-entry", planId, entryId: chapterId, expectedVersion: chapter.value.version,
             expectedContentHash: chapter.contentHash});
         const detailId = (await action({kind: "create-entry", planId, parentId: chapterId,
-            entryKind: "detail", title: "细纲", body: "雨夜对话", targetWords: 1800})).entryId!;
+            entryKind: "detail", title: "细纲", ...sceneDetail("雨夜对话")})).entryId!;
         const draft = await snapshot();
         const detail = draft.entries.find(({value}) => value.id === detailId)!;
         const input = {planId, entryId: detailId, expectedRevision: draft.manifest.revision,
@@ -466,35 +465,58 @@ describe("Project 大纲规划真实 H3 HTTP 合同", () => {
         expect(restored.entries.find(({value}) => value.id === detailId)?.value.analysis?.reportId).toBe(issued.report.reportId);
     }, 60_000);
 
-    it("真实 H3 writer 交接按固定线路引用读取素材并返回来源", async () => {
+    it("真实 H3 正文写作交接按大纲库层级读取章节，不依赖线路，并按引用读取素材", async () => {
         const client = planningClient();
         expect((await client.post("open", {})).status).toBe(200);
         await client.read();
-        const totalId = (await client.library({kind: "create-total", title: "总纲", body: "开篇"})).entryId!;
-        const planId = (await client.library({kind: "create-plan", title: "主方案"})).planId!;
-        const openingId = await client.adoptedChapter(planId, totalId, "序章", "开篇");
+        const {planId, totalId} = await client.createPlan("主方案");
+        const total = client.entry(totalId);
+        await client.library({kind: "adopt-entry", planId, entryId: totalId, expectedVersion: total.value.version,
+            expectedContentHash: total.contentHash});
         const chapterId = await client.adoptedChapter(planId, totalId, "第一章", "相遇", {materialRefs: ["lorebook/hero.md"]});
-        const first = (await client.graph("add-graph-node", planId, {column: 0, row: 0, entryId: openingId})).nodeId!;
-        const second = (await client.graph("add-graph-node", planId, {column: 1, row: 0, entryId: chapterId})).nodeId!;
-        await client.graph("connect-graph-nodes", planId, {from: first, to: second});
-        const lineId = await client.createLine(planId, "主线", "main", [second, first]);
-        await client.fix(lineId);
-        const fixedRequest = client.request(lineId);
+        const detailId = (await client.library({kind: "create-entry", planId, parentId: chapterId, entryKind: "detail",
+            title: "雨夜", ...sceneDetail("雨夜对话")})).entryId!;
+        const chapters = async () => {
+            const response = await client.post("read-writer-chapters", {planId});
+            expect(response.status, await response.clone().text()).toBe(200);
+            return (await response.json() as {chapters: {entryId: string; writable: boolean; block?: {code: string}}[]}).chapters;
+        };
+        expect(await chapters()).toMatchObject([{entryId: chapterId, writable: false, block: {code: "DETAIL_NOT_REVIEWED"}}]);
+        const input = {planId, chapterEntryId: chapterId};
+        expect((await client.post("read-writer-chapter-context", input)).status).toBe(422);
+
+        const detail = client.entry(detailId);
+        const review = {planId, entryId: detailId, expectedRevision: client.snapshot.manifest.revision,
+            expectedVersion: detail.value.version, expectedContentHash: detail.contentHash};
+        const {completeDirectionWithModel} = await import("nbook/server/outline/direction-model");
+        vi.mocked(completeDirectionWithModel).mockResolvedValueOnce(JSON.stringify({summary: "一致", deviations: [], conflicts: []}));
+        const analyzed = await client.post("analyze-detail", review);
+        const issued = await analyzed.json() as {report: {reportId: string}};
+        expect(analyzed.status, JSON.stringify(issued)).toBe(200);
+        expect((await client.post("adopt-detail", {...review, reportId: issued.report.reportId, confirmDeviations: true,
+            resolutions: []})).status).toBe(200);
+        await client.read();
+        expect(client.snapshot.lines).toEqual([]);
+        expect(await chapters()).toMatchObject([{entryId: chapterId, writable: true, details: [{entryId: detailId}]}]);
+
         await fs.mkdir(projectFile("lorebook"), {recursive: true});
         await fs.writeFile(projectFile("lorebook/hero.md"), "英雄素材", "utf8");
-        const response = await client.post("read-writer-context", {...fixedRequest, materialPaths: ["lorebook/hero.md"]});
+        const response = await client.post("read-writer-chapter-context", {...input, materialPaths: ["lorebook/hero.md"]});
         expect(response.status, await response.clone().text()).toBe(200);
-        expect(await response.json()).toMatchObject({lineId, planId,
-            nodes: [{nodeId: first, entryId: openingId, column: 0}, {nodeId: second, entryId: chapterId, column: 1}],
+        const context = await response.json() as {basis: object};
+        expect(context).toMatchObject({planId, chapter: {entryId: chapterId, body: "相遇"},
+            details: [{entryId: detailId, body: sceneDetail("雨夜对话").body}],
             materials: [{path: "lorebook/hero.md", content: "英雄素材", sources: [{entryId: chapterId, field: "materialRefs"}]}]});
+        const unchanged = await client.post("read-writer-chapter-context", {...input, expectedBasis: context.basis});
+        expect(await unchanged.json()).toMatchObject({basisChanged: false});
+        expect((await client.post("read-writer-chapter-context", {...input, materialPaths: ["lorebook/secret.md"]})).status).toBe(422);
     }, 60_000);
 
     it("真实 H3 主线切换仅在明确确认下改写同方案两条线路并可撤销", async () => {
         const client = planningClient();
         expect((await client.post("open", {})).status).toBe(200);
         await client.read();
-        await client.library({kind: "create-total", title: "总纲", body: "开端"});
-        const planId = (await client.library({kind: "create-plan", title: "方案"})).planId!;
+        const {planId} = await client.createPlan("方案");
         const sourceId = await client.createLine(planId, "原主线", "main", []);
         const targetId = await client.createLine(planId, "替代", "branch", []);
         const source = client.line(sourceId);
@@ -525,8 +547,7 @@ describe("Project 大纲规划真实 H3 HTTP 合同", () => {
         const client = planningClient();
         expect((await client.post("open", {})).status).toBe(200);
         await client.read();
-        const totalId = (await client.library({kind: "create-total", title: "总纲", body: "起点"})).entryId!;
-        const planId = (await client.library({kind: "create-plan", title: "方案"})).planId!;
+        const {planId, totalId} = await client.createPlan("方案");
         const lost = await client.adoptedChapter(planId, totalId, "丢失章节", "正文");
         const kept = await client.adoptedChapter(planId, totalId, "后续章节", "后续");
         const lostNode = (await client.graph("add-graph-node", planId, {column: 0, row: 0, entryId: lost})).nodeId!;
@@ -586,5 +607,110 @@ describe("Project 大纲规划真实 H3 HTTP 合同", () => {
         await closeProject(ref, "shutdown");
         await openProject(ref, {kind: "job", source: "outline-repair-h3-fixed-reopen"}, workspaceRoot);
         expect((await client.post("read-fixed-line", fixedRequest)).status).toBe(200);
+    }, 60_000);
+
+    it("真实 H3 associate-total 手动共用总纲：有正文须确认替换，重开后保持，可撤销", async () => {
+        const client = planningClient();
+        expect((await client.post("open", {})).status).toBe(200);
+        await client.read();
+        const a = await client.createPlan("甲方案");
+        const b = await client.createPlan("乙方案");
+        const c = await client.createPlan("丙方案");
+        const totalOf = (planId: string) => client.snapshot.manifest.plans.find(({id}) => id === planId)!;
+        // create-plan 为每个方案各建一个空总纲，创建后互不共享。
+        expect(client.snapshot.manifest.plans.map(({id, totalId}) => ({id, totalId}))).toEqual([
+            {id: a.planId, totalId: a.totalId}, {id: b.planId, totalId: b.totalId}, {id: c.planId, totalId: c.totalId}]);
+        expect(new Set([a.totalId, b.totalId, c.totalId]).size).toBe(3);
+
+        const editTotal = async (plan: {planId: string; totalId: string}, body: string) => {
+            const total = client.entry(plan.totalId);
+            await client.library({kind: "edit-entry", planId: plan.planId, entryId: plan.totalId, expectedVersion: total.value.version,
+                expectedContentHash: total.contentHash, title: total.value.title, body});
+        };
+        await editTotal(a, "共用的作品总纲");
+        await editTotal(c, "丙方案自己的总纲正文");
+
+        const associate = (planId: string, totalId: string, extra: object = {}) =>
+            client.post("library-action", {expectedRevision: client.snapshot.manifest.revision,
+                action: {kind: "associate-total", planId, totalId, ...extra}});
+        expect((await associate("plan-missing", a.totalId)).status).toBe(422);
+        expect((await associate(b.planId, b.totalId)).status).toBe(422);
+        expect((await associate(b.planId, "not-an-entry-id")).status).toBe(400);
+
+        // 乙方案总纲为空，直接改用甲方案总纲，不需要确认。
+        const shared = await associate(b.planId, a.totalId);
+        expect(shared.status, await shared.clone().text()).toBe(200);
+        await client.read();
+        expect(totalOf(b.planId).totalId).toBe(a.totalId);
+        expect(totalOf(b.planId).placements.filter(({parentId}) => parentId === null).map(({entryId}) => entryId)).toEqual([a.totalId]);
+        // 被替换的旧总纲条目仍保留，是否删除由用户另行决定。
+        expect(client.snapshot.entries.some(({value}) => value.id === b.totalId)).toBe(true);
+
+        // 丙方案总纲有正文：未确认时拒绝且不产生新 revision，确认后才替换。
+        const revision = client.snapshot.manifest.revision;
+        expect((await associate(c.planId, a.totalId)).status).toBe(422);
+        expect((await associate(c.planId, a.totalId, {confirmReplace: false})).status).toBe(400);
+        await client.read();
+        expect(client.snapshot.manifest.revision).toBe(revision);
+        const confirmed = await associate(c.planId, a.totalId, {confirmReplace: true});
+        expect(confirmed.status, await confirmed.clone().text()).toBe(200);
+        const {transactionId} = await confirmed.json() as {transactionId: string};
+        await client.read();
+        expect(client.snapshot.manifest.plans.map(({totalId}) => totalId)).toEqual([a.totalId, a.totalId, a.totalId]);
+
+        await closeProject(ref, "shutdown");
+        await openProject(ref, {kind: "job", source: "outline-associate-total-reopen"}, workspaceRoot);
+        await client.read();
+        expect(client.snapshot.manifest.plans.map(({totalId}) => totalId)).toEqual([a.totalId, a.totalId, a.totalId]);
+
+        const undone = await client.post("undo", {transactionId});
+        expect(undone.status, await undone.clone().text()).toBe(200);
+        await client.read();
+        expect(totalOf(c.planId).totalId).toBe(c.totalId);
+        expect(totalOf(b.planId).totalId).toBe(a.totalId);
+    }, 60_000);
+
+    it("真实 H3 unshare-total 为共用总纲的方案分叉专属总纲，内容沿用且其他方案不受影响", async () => {
+        const client = planningClient();
+        expect((await client.post("open", {})).status).toBe(200);
+        await client.read();
+        const a = await client.createPlan("甲方案");
+        const b = await client.createPlan("乙方案");
+        const total = client.entry(a.totalId);
+        await client.library({kind: "edit-entry", planId: a.planId, entryId: a.totalId, expectedVersion: total.value.version,
+            expectedContentHash: total.contentHash, title: total.value.title, body: "共用的作品总纲"});
+        const unshare = (planId: string) => client.post("library-action", {expectedRevision: client.snapshot.manifest.revision,
+            action: {kind: "unshare-total", planId}});
+        const totalOf = (planId: string) => client.snapshot.manifest.plans.find(({id}) => id === planId)!;
+
+        // 总纲尚未被多个方案共用时，无需也不允许分叉。
+        expect((await unshare(a.planId)).status).toBe(422);
+        expect((await unshare("plan-missing")).status).toBe(422);
+        await client.library({kind: "associate-total", planId: b.planId, totalId: a.totalId});
+        expect(totalOf(b.planId).totalId).toBe(a.totalId);
+
+        const split = await unshare(b.planId);
+        expect(split.status, await split.clone().text()).toBe(200);
+        const result = await split.json() as {planId: string; entryId: string; transactionId: string};
+        await client.read();
+        const forkedTotalId = totalOf(b.planId).totalId;
+        expect(result).toMatchObject({planId: b.planId, entryId: forkedTotalId});
+        expect(forkedTotalId).not.toBe(a.totalId);
+        expect(totalOf(a.planId).totalId).toBe(a.totalId);
+        expect(client.entry(forkedTotalId).value).toMatchObject({kind: "total", body: "共用的作品总纲", version: 0});
+        expect(totalOf(b.planId).placements.filter(({parentId}) => parentId === null).map(({entryId}) => entryId)).toEqual([forkedTotalId]);
+        // 分叉后已不再共用，再次分叉被拒绝。
+        expect((await unshare(b.planId)).status).toBe(422);
+
+        await closeProject(ref, "shutdown");
+        await openProject(ref, {kind: "job", source: "outline-unshare-total-reopen"}, workspaceRoot);
+        await client.read();
+        expect(totalOf(b.planId).totalId).toBe(forkedTotalId);
+        expect(totalOf(a.planId).totalId).toBe(a.totalId);
+
+        const undone = await client.post("undo", {transactionId: result.transactionId});
+        expect(undone.status, await undone.clone().text()).toBe(200);
+        await client.read();
+        expect(totalOf(b.planId).totalId).toBe(a.totalId);
     }, 60_000);
 });

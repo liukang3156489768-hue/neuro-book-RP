@@ -115,10 +115,11 @@ class TraceCollector {
         return {
             ...options,
             onPayload: async (payload: unknown, model: Model<Api>) => {
+                const replacement = prevPayload ? await prevPayload(payload, model) : undefined;
                 if (this.binding.settings.capturePayload && !this.extras.payloadOmittedReason) {
-                    this.capturedPayload = payload;
+                    this.capturedPayload = replacement ?? payload;
                 }
-                return prevPayload ? prevPayload(payload, model) : undefined;
+                return replacement;
             },
             onResponse: async (response: ProviderResponse, model: Model<Api>) => {
                 this.httpStatus = response.status;

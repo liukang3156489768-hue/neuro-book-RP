@@ -18,12 +18,12 @@ export type ForeshadowingAction =
 export type ForeshadowingChange = Readonly<{id: OutlineId; publish: PlanningPublishInput}>;
 
 /** 伏笔的确认状态属于定义文件；四种用户状态由正式章节标记计算，不写回此文件。 */
-export function prepareForeshadowingAction(snapshot: PlanningSnapshot, action: ForeshadowingAction): ForeshadowingChange {
+export function prepareForeshadowingAction(snapshot: PlanningSnapshot, action: ForeshadowingAction, creationSeed?: string): ForeshadowingChange {
     const manifest = snapshot.manifest;
     if (action.kind === "create-foreshadowing") {
         const title = action.title.trim();
         if (!title) throw new OutlineLibraryError("伏笔标题不能为空");
-        const id = createStableId("fo");
+        const id = createStableId("fo", creationSeed);
         const path = `outline/foreshadowing/${stableFileName(title, id, "md")}`;
         const content = serializeForeshadowingMarkdown({schema: OUTLINE_FORESHADOW_SCHEMA, id, version: 0,
             status: "draft", title, body: action.body,

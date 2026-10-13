@@ -1,4 +1,4 @@
-import type {JsonValue, ThinkingLevel} from "nbook/server/agent/messages/types";
+import type {JsonValue, ThinkingLevel, Usage} from "nbook/server/agent/messages/types";
 import type {StoredAgentMessage} from "nbook/server/agent/messages/stored-types";
 import type {DurableSessionModelRef} from "nbook/server/agent/session/session-model-redaction";
 import type {VariableJsonPatchOperation, VariableNamespace} from "nbook/server/agent/variables/types";
@@ -178,6 +178,8 @@ export type CompactionSessionEntry = {
         visibleEntryCountBefore?: number;
         recentEntryCount?: number;
         summarizedEntryCount?: number;
+        usage?: Usage;
+        totalBatches?: number;
     };
 };
 

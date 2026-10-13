@@ -132,6 +132,8 @@ export interface EditorGroupState {
     toolbarActions?: EditorToolbarAction[];
     busy?: boolean;
     diagnosis?: string | null;
+    /** 活动文档被外部流程占用时的说明（视图只读）；与诊断不同，它不是错误，没有重试。 */
+    notice?: string | null;
     breadcrumbsSymbols?: readonly {id: string; label: string; iconClass?: string}[];
 }
 

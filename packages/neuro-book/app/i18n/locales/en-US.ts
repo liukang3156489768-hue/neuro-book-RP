@@ -212,6 +212,10 @@ const enUS = {
                 label: "Embedding",
                 description: "Configure the embedding service used by RAG.",
             },
+            summarizerModel: {
+                label: "Summarizer Model",
+                description: "Choose the model used for context summaries.",
+            },
             cost: {
                 label: "Cost Display",
                 description: "Set the currency and exchange rate for Agent cost display.",
@@ -223,6 +227,10 @@ const enUS = {
             agentProfileModels: {
                 label: "Agent Profile",
                 description: "Configure default Profile, model parameters, and Profile settings.",
+            },
+            promptManagement: {
+                label: "Prompt Management",
+                description: "Manage prompt presets for design, planning, and writing.",
             },
             observability: {
                 label: "Observability",
@@ -845,7 +853,7 @@ const enUS = {
                 providerId: "Config ID",
                 providerIdPlaceholder: "For example siliconflow or deepseek-cn",
                 providerIdentityImmutable: "A saved Provider connection identity cannot be edited. Clone the connection first.",
-                providerIdentityHint: "Config ID, Base URL, and proxy define the connection identity. Clone it to change them.",
+                providerIdentityHint: "The Provider ID preserves model references; Base URL and proxy can be edited directly.",
                 providerName: "Provider Name",
                 providerNamePlaceholder: "For example SiliconFlow",
                 providerModelApi: "Provider default API format",
@@ -878,6 +886,8 @@ const enUS = {
                 discoveryTitle: "{provider} model discovery",
                 remoteComplete: "Remote complete",
                 needsManualCompletion: "Needs completion",
+                completeDiscoveredModel: "Complete capabilities before adding",
+                enableDiscoveredModel: "Enable this model",
                 libraryNotDiscovered: "This is NeuroBook's standard model knowledge. It does not mean the current provider offers these models. Run a model check after adding one.",
                 noLibraryMetadata: "The Model Library has no standard record for this model.",
                 noProviderSelected: "No Provider selected",
@@ -912,6 +922,8 @@ const enUS = {
             container: {
                 tools: "Tools",
                 agent: "Agent",
+                outline: "Outline",
+                writing: "Writing",
                 panel: "Panel",
                 actions: "Container actions",
                 notReady: "View placement record is not ready yet",
@@ -1635,6 +1647,8 @@ const enUS = {
         },
         toolPanel: {
             files: "Files",
+            writingOutline: "Outline",
+            writingSession: "Writing",
             characters: "Characters",
             plot: "Plot",
             outline: "Outline",
@@ -2607,6 +2621,7 @@ const enUS = {
             menuDeleteComment: "Delete Comment",
             menuAddRuby: "Add Ruby Annotation",
             menuAddBilingual: "Parallel Translation",
+            menuRewriteSelection: "Rewrite selection",
             rubyText: "Annotation text (leave empty to remove)",
             addRuby: "Add Ruby Annotation",
             bilingualText: "Paragraph translation (leave empty to remove)",

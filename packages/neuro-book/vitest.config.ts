@@ -50,6 +50,8 @@ export default defineConfig({
             "app/utils/storage/**/*.test.ts",
             "app/utils/workbench/**/*.test.ts",
             "app/utils/editor-workbench/**/*.test.ts",
+            "app/utils/writing/**/*.test.ts",
+            "app/utils/outline/**/*.test.ts",
             "app/stores/**/*.test.ts",
             "app/utils/novel-ide-settings-responsive.contract.test.ts",
             "app/utils/novel-ide-settings-current-project.contract.test.ts",

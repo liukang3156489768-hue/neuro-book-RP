@@ -15,7 +15,7 @@ describe("Provider Template Library", () => {
 
     it("提供单一 Custom Provider 创建入口", () => {
         const custom = providerTemplateLibrary().templates.filter((template) => template.id === "custom");
-        expect(custom).toEqual([{id: "custom", name: "Custom Provider", baseUrl: "", defaultModelApi: null, models: []}]);
+        expect(custom).toEqual([{id: "custom", name: "Custom Provider", description: "空白连接模板：手动填写 API Base、协议和模型清单。", baseUrl: "", defaultModelApi: null, models: []}]);
     });
 
     it("普通连接模板不会把 Pi Registry 全量模型写入用户配置", () => {

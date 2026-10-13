@@ -51,7 +51,7 @@ function handleChange(event: Event): void {
 
 <template>
     <label
-        class="group inline-flex items-start gap-2.5 text-[var(--text-sm)] text-[var(--text-main)] select-none transition-opacity"
+        class="group relative inline-flex items-start gap-2.5 text-[var(--text-sm)] text-[var(--text-main)] select-none transition-opacity"
         :class="props.disabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'"
     >
         <input
@@ -64,7 +64,7 @@ function handleChange(event: Event): void {
             :aria-checked="isIndeterminate ? 'mixed' : (isChecked ? 'true' : 'false')"
             :aria-describedby="field?.ariaDescribedby.value"
             :aria-invalid="field?.invalid.value || undefined"
-            class="peer sr-only"
+            class="checkbox-input peer sr-only"
             @focus="emit('focus', $event)"
             @change="handleChange"
         >
@@ -92,3 +92,16 @@ function handleChange(event: Event): void {
         </span>
     </label>
 </template>
+
+<style scoped>
+/*
+ * `sr-only` 的绝对定位节点若没有定位祖先，会保留自己的文档流静态位置。
+ * 在滚动列表里，标签文字可能已经可见，但 input 仍位于行外；点击后浏览器
+ * 为了让焦点 input 可见而滚动整个列表。把焦点锚点放回当前 label，键盘语义不变。
+ */
+.checkbox-input {
+    top: 0;
+    left: 0;
+    margin: 0;
+}
+</style>

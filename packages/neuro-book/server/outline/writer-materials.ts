@@ -3,10 +3,9 @@ import {resolveContainedFilePath, relativeRealPathInside, type AbsoluteFsPath} f
 import {isEditableTextPath} from "nbook/server/workspace-files/workspace-files";
 import {contentHash, type OutlineId} from "./format";
 import {OutlineLineError} from "./line-planning";
-import type {readWriterOutlineContext} from "./writer-context";
+import type {WriterChapterContext} from "./writer-context";
 
-type WriterContext = ReturnType<typeof readWriterOutlineContext>;
-type MaterialSource = Readonly<{nodeId: OutlineId; entryId: OutlineId; entryVersion: number;
+type MaterialSource = Readonly<{entryId: OutlineId; entryVersion: number;
     entryContentHash: string; entryPath: string; field: "materialRefs" | "references"}>;
 
 const MAX_MATERIALS = 8;
@@ -124,7 +123,7 @@ async function readPreparedMaterial(material: PreparedMaterial): Promise<string>
 /** 素材索引是正式条目的选择清单，而非 writer 任意路径读取权限。 */
 export async function readSelectedWriterMaterials(
     projectRoot: AbsoluteFsPath,
-    context: WriterContext,
+    context: WriterChapterContext,
     selectedPaths: readonly string[],
 ): Promise<readonly Readonly<{path: string; content: string; contentHash: string; sources: readonly MaterialSource[]}>[]> {
     if (selectedPaths.length === 0 || selectedPaths.length > MAX_MATERIALS
@@ -140,27 +139,25 @@ export async function readSelectedWriterMaterials(
         throw new OutlineLineError("素材读取必须指定 1 至 8 个不重复的正式来源路径");
     }
     const sourcesByPath = new Map<string, MaterialSource[]>();
-    for (const node of context.nodes) {
-        for (const entry of [node, ...node.details]) {
-            if (entry.kind !== "chapter" && entry.kind !== "detail") continue;
-            // 待补参考文件没有可读来源，不能被当成正式素材读取。
-            const referencePaths = entry.references.flatMap((reference) => reference.pending === true || reference.path === undefined ? [] : [reference.path]);
-            for (const [field, refs] of [["materialRefs", entry.materialRefs], ["references", referencePaths]] as const) {
-                for (const ref of refs) {
-                    const normalized = normalizeMaterialPath(ref);
-                    const source: MaterialSource = {nodeId: node.nodeId, entryId: entry.entryId,
-                        entryVersion: entry.version, entryContentHash: entry.contentHash, entryPath: entry.path, field};
-                    const current = sourcesByPath.get(normalized);
-                    if (current) current.push(source);
-                    else sourcesByPath.set(normalized, [source]);
-                }
+    for (const entry of [context.chapter, ...context.details]) {
+        // 待补参考文件没有可读来源，不能被当成正式素材读取。
+        // 段落参考可以在多个段落复用同一资料，来源审计按条目去重。
+        const referencePaths = [...new Set(entry.references.flatMap((reference) => reference.pending === true || reference.path === undefined ? [] : [reference.path]))];
+        for (const [field, refs] of [["materialRefs", entry.materialRefs], ["references", referencePaths]] as const) {
+            for (const ref of refs) {
+                const normalized = normalizeMaterialPath(ref);
+                const source: MaterialSource = {entryId: entry.entryId,
+                    entryVersion: entry.version, entryContentHash: entry.contentHash, entryPath: entry.path, field};
+                const current = sourcesByPath.get(normalized);
+                if (current) current.push(source);
+                else sourcesByPath.set(normalized, [source]);
             }
         }
     }
     const prepared: PreparedMaterial[] = [];
     for (const selected of normalizedSelections) {
         const sources = sourcesByPath.get(selected);
-        if (!sources) throw new OutlineLineError("所选素材未被当前固定线路的正式章节或细纲引用");
+        if (!sources) throw new OutlineLineError("所选素材未被本章正式章节大纲或细纲引用");
         let target: AbsoluteFsPath;
         try {
             target = resolveContainedFilePath(projectRoot, selected);

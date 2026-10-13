@@ -9,6 +9,8 @@ export type CreateRunFrameInput = {
     workspaceRoot: RunFrame["workspaceRoot"];
     currentProject: RunFrame["currentProject"];
     systemPrompt: RunFrame["systemPrompt"];
+    managedPromptMessages?: RunFrame["managedPromptMessages"];
+    orderedPromptMessages?: RunFrame["orderedPromptMessages"];
     messages: RunFrame["messages"];
     promptPrefix?: RunFrame["promptPrefix"];
     models: RunFrame["models"];
@@ -46,6 +48,8 @@ export function createRunFrame(input: CreateRunFrameInput): RunFrame {
         workspaceRoot: input.workspaceRoot,
         currentProject: input.currentProject,
         systemPrompt: input.systemPrompt,
+        managedPromptMessages: input.managedPromptMessages,
+        orderedPromptMessages: input.orderedPromptMessages,
         messages: input.messages.slice(),
         promptPrefix: input.promptPrefix,
         models: input.models,

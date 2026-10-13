@@ -28,6 +28,16 @@ export interface MarkdownCommentBlockToken {
     text: string;
 }
 
+/** 细纲锚点：guidance 是写作指导，reference 是段落参考；元数据按 marker 存在 frontmatter。 */
+export type OutlineAnchorKind = "guidance" | "reference";
+
+export interface MarkdownOutlineAnchorToken {
+    raw: string;
+    kind: OutlineAnchorKind;
+    marker: string;
+    text: string;
+}
+
 export interface MarkdownRubyToken {
     raw: string;
     /** 注音 / 对照标注文本 */
@@ -54,6 +64,11 @@ export interface MarkdownAlignToken {
 
 // 行内评论：<comment ...>...</comment>，兼容读旧 <inline-comment>；开闭标签名必须一致
 const COMMENT_INLINE_PATTERN = /^<(comment|inline-comment)(?:\s+([^>]*))?>([\s\S]*?)<\/\1>/;
+// 细纲锚点：同伏笔标记一样用注释包围原文，旧的 <guide>/<reference> 标签已废弃。
+const OUTLINE_ANCHOR_PATTERNS: Readonly<Record<OutlineAnchorKind, RegExp>> = {
+    guidance: /^<!--\s*nb:guidance\b([\s\S]*?)-->([\s\S]*?)<!--\s*\/nb:guidance\b([\s\S]*?)-->/,
+    reference: /^<!--\s*nb:reference\b([\s\S]*?)-->([\s\S]*?)<!--\s*\/nb:reference\b([\s\S]*?)-->/,
+};
 // 伏笔结构化标记：注释包围可见文本，编辑器把注释语法隐藏为可视下划线。
 const FORESHADOW_MARKER_PATTERN = /^<!--\s*nb:foreshadow\b([\s\S]*?)-->([\s\S]*?)<!--\s*\/nb:foreshadow\b([\s\S]*?)-->/;
 // 块级评论：开标签独占一行，闭标签独立成行，中间可跨任意段落
@@ -298,6 +313,64 @@ export function renderMarkdownCommentBlock(attrs: {id?: string | null; body?: st
     const idAttribute = id ? ` id="${escapeAttribute(id)}"` : "";
     const bodyAttribute = body ? ` body="${escapeAttribute(body)}"` : "";
     return `<comment${idAttribute}${bodyAttribute}>\n${innerMarkdown}\n</comment>`;
+}
+
+/**
+ * 解析细纲锚点。只认只带 marker 且开闭一致的注释；其余形态返回 null 交给源码兜底，
+ * 完整合法性（配对、唯一、与 frontmatter 一一对应）由服务端大纲解析负责。
+ */
+export function parseMarkdownOutlineAnchor(src: string, kind: OutlineAnchorKind): MarkdownOutlineAnchorToken | null {
+    const matched = OUTLINE_ANCHOR_PATTERNS[kind].exec(src);
+    if (!matched) return null;
+    const opening = parseAttributes(matched[1] ?? "");
+    const closing = parseAttributes(matched[3] ?? "");
+    const marker = opening.marker?.trim() ?? "";
+    const text = matched[2] ?? "";
+    if (!marker || Object.keys(opening).some((key) => key !== "marker")
+        || closing.marker?.trim() !== marker || Object.keys(closing).some((key) => key !== "marker")
+        || !text.trim()) {
+        return null;
+    }
+    return {raw: matched[0], kind, marker, text};
+}
+
+export type MarkdownOutlineAnchorRange = Readonly<{
+    marker: string;
+    /** 去掉其他锚点注释后的可见原文 */
+    text: string;
+    /** 开始注释起点与结束注释终点，用于整体删除或定位 */
+    start: number;
+    end: number;
+    /** 被包围原文在 body 中的区间 */
+    contentStart: number;
+    contentEnd: number;
+}>;
+
+/**
+ * 按出现顺序收集一类细纲锚点，供表单列出与定位。损坏或未配对的注释直接跳过，
+ * 由保存时的服务端解析给出具体错误，这里不重复一套失败语义。
+ */
+export function collectMarkdownOutlineAnchors(body: string, kind: OutlineAnchorKind): MarkdownOutlineAnchorRange[] {
+    const pattern = new RegExp(String.raw`<!--\s*nb:${kind}\s+marker="([^"]+)"\s*-->([\s\S]*?)<!--\s*\/nb:${kind}\s+marker="\1"\s*-->`, "gu");
+    return [...body.matchAll(pattern)].map((matched) => {
+        const start = matched.index;
+        const inner = matched[2] ?? "";
+        const contentStart = start + matched[0].indexOf("-->") + 3;
+        return {
+            marker: matched[1] ?? "",
+            text: inner.replace(/<!--[\s\S]*?-->/gu, ""),
+            start,
+            end: start + matched[0].length,
+            contentStart,
+            contentEnd: contentStart + inner.length,
+        };
+    });
+}
+
+/** 将细纲锚点序列化为稳定格式，供富文本 round-trip 与细纲表单插入使用。 */
+export function renderMarkdownOutlineAnchor(kind: OutlineAnchorKind, marker: string, innerMarkdown: string): string {
+    const attribute = `marker="${escapeAttribute(marker)}"`;
+    return `<!-- nb:${kind} ${attribute} -->${innerMarkdown}<!-- /nb:${kind} ${attribute} -->`;
 }
 
 /**

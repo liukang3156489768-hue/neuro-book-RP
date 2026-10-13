@@ -119,6 +119,24 @@ describe("phase 2 form control contracts", () => {
         wrapper.unmount();
     });
 
+    it("opens the option list from a pointer click", async () => {
+        const wrapper = mount(FormSelect, {
+            props: {
+                modelValue: "one",
+                options: [{label: "第一项", value: "one"}, {label: "第二项", value: "two"}],
+            },
+            attachTo: document.body,
+        });
+        const trigger = wrapper.get("[role='combobox']");
+        await trigger.trigger("pointerdown", {button: 0});
+        await nextTick();
+        await nextTick();
+
+        expect(document.body.textContent).toContain("第二项");
+        expect(document.querySelector("[role='listbox']")).not.toBeNull();
+        wrapper.unmount();
+    });
+
     it("forwards class and attributes to the FormSelect trigger and drops the conflicting default width", () => {
         // SelectRoot 是多根组件，Vue 不自动继承；不显式转发的话宽度与 aria-label 会被静默丢弃
         const wrapper = mount(FormSelect, {

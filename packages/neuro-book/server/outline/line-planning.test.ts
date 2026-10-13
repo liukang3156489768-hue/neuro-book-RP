@@ -41,8 +41,9 @@ describe("方案线路图", () => {
 
     it("首次图操作从 version 0 创建线路图，并按 version 做 CAS", () => {
         const fixture = new PlanningFixture();
-        const totalId = fixture.library({kind: "create-total", title: "总纲", body: "开端"}).entryId!;
-        const planId = fixture.library({kind: "create-plan", title: "方案"}).planId!;
+        const created = fixture.library({kind: "create-plan", title: "方案"});
+        const planId = created.planId!;
+        const totalId = created.entryId!;
         expect(fixture.graphVersion(planId)).toBe(0);
         const empty = fixture.graph("add-graph-node", planId, {column: 3, row: 2}).nodeId!;
         expect(findPlanGraph(fixture.snapshot, planId)!.value).toMatchObject({version: 1,
@@ -61,12 +62,15 @@ describe("方案线路图", () => {
 
     it("节点条目必须属于本方案且不是细纲；同格可并行但同格与向左不能连线", () => {
         const fixture = new PlanningFixture();
-        const totalId = fixture.library({kind: "create-total", title: "总纲", body: "开端"}).entryId!;
-        const planA = fixture.library({kind: "create-plan", title: "甲"}).planId!;
-        const planB = fixture.library({kind: "create-plan", title: "乙"}).planId!;
-        const chapterB = fixture.adoptedChapter(planB, totalId, "乙章节");
+        const createdA = fixture.library({kind: "create-plan", title: "甲"});
+        const planA = createdA.planId!;
+        const totalA = createdA.entryId!;
+        const createdB = fixture.library({kind: "create-plan", title: "乙"});
+        const planB = createdB.planId!;
+        const totalB = createdB.entryId!;
+        const chapterB = fixture.adoptedChapter(planB, totalB, "乙章节");
         expect(() => fixture.graph("add-graph-node", planA, {column: 0, row: 0, entryId: chapterB})).toThrow(/不在本方案/);
-        const chapterA = fixture.adoptedChapter(planA, totalId, "甲章节");
+        const chapterA = fixture.adoptedChapter(planA, totalA, "甲章节");
         const detailId = fixture.library({kind: "create-entry", planId: planA, parentId: chapterA, entryKind: "detail",
             title: "细纲", body: "细纲"}).entryId!;
         expect(() => fixture.graph("add-graph-node", planA, {column: 0, row: 0, entryId: detailId})).toThrow(/不能独立成为线路节点/);
@@ -175,8 +179,9 @@ describe("ready Project 线路图", () => {
             snapshot = await openProjectPlanning(ref);
             return result;
         };
-        const totalId = (await library({kind: "create-total", title: "总纲", body: "开端"})).entryId!;
-        const planId = (await library({kind: "create-plan", title: "甲方案"})).planId!;
+        const createdPlan = await library({kind: "create-plan", title: "甲方案"});
+        const planId = createdPlan.planId!;
+        const totalId = createdPlan.entryId!;
         const version = () => findPlanGraph(snapshot, planId)?.value.version ?? 0;
         const first = await apply({kind: "add-graph-node", planId, expectedGraphVersion: 0, column: 0, row: 0, entryId: totalId});
         const graphPath = findPlanGraph(snapshot, planId)!.path;

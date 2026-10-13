@@ -1,11 +1,11 @@
 import {createOutlineRepository} from "./repository";
+import {preparePlanningMaterialMutations, validateAdaptationAnchors} from "./adaptation";
 import {
     contentHash,
     parseEntryMarkdown,
     parseForeshadowingMarkdown,
     parseForeshadowMarkers,
     parseGraphYaml,
-    parseGuidanceAnnotations,
     parseLineYaml,
     parseManifest,
     validateManifestAndEntries,
@@ -101,8 +101,8 @@ export function assertNonDestructivePlanningEdit(snapshot: PlanningSnapshot, inp
             throw new OutlineTransactionError("PUBLISH_FAILED", "删除规划对象必须先预览并使用删除命令");
         }
     }
-    if (before.totalId !== null && next.totalId !== before.totalId) {
-        throw new OutlineTransactionError("PUBLISH_FAILED", "移除或替换总纲需要独立删除确认");
+    if (before.plans.some((plan) => next.plans.find((item) => item.id === plan.id)?.totalId !== plan.totalId)) {
+        throw new OutlineTransactionError("PUBLISH_FAILED", "方案总纲的关联、分叉与替换必须使用领域操作");
     }
     for (const key of ["entries", "foreshadowing", "graphs", "lines"] as const) {
         const retained = new Set(next[key].map((item) => item.id));
@@ -239,8 +239,9 @@ async function publishValidatedPlanningFiles(
                 }
             }
         }
+        const materialMutations = await preparePlanningMaterialMutations(options.projectRoot, previous, candidate);
         return publishOutlineFiles({...options, mutationGate: undefined,
-            assertAbsentPaths: missing ? [missing.path] : undefined}, mutations);
+            assertAbsentPaths: missing ? [missing.path] : undefined}, [...mutations, ...materialMutations]);
     };
     return options.mutationGate ? options.mutationGate(run) : run();
 }
@@ -331,13 +332,11 @@ function parsePlanningSnapshot(files: readonly OutlineCanonicalFile[], markerIss
     const missingEntryIds = new Set(manifest.entries.filter(({path}) => missingEntryPaths.has(path)).map(({id}) => id));
     // 只豁免诊断读取时已确定丢失的对象；方案树与现存条目仍须通过完整校验。
     validateManifestAndEntries(manifest, entries.map((item) => item.value), "outline", missingEntryIds);
+    validateAdaptationAnchors(manifest, entries.map((item) => item.value));
     validatePlanningGraphs(graphs.map((item) => item.value), lines.map((item) => item.value), manifest.plans,
         new Map(entries.map((item) => [item.value.id, item.value.kind])));
     for (const entry of entries) {
         if (entry.markers.length > 0 && entry.value.kind !== "chapter") throw new Error(`伏笔正式标记只能属于章节大纲：${entry.value.id}`);
-        // 候选快照也经此校验，损坏的写作指导注释因此无法落盘；投影侧按需重新解析。
-        const guidance = parseGuidanceAnnotations(entry.value.body, entry.path);
-        if (guidance.length > 0 && entry.value.kind !== "detail") throw new Error(`写作指导场景标注只能属于细纲：${entry.value.id}`);
     }
     assertManifestMembers(readableManifest, entries, foreshadowing, graphs, lines);
     return {manifest, entries, foreshadowing, graphs, lines};

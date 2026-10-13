@@ -77,6 +77,9 @@ export function useModelDiscoverySession(options: ModelDiscoverySessionOptions) 
             notification.error(t("settings.panels.models.providerModelApiRequired"));
             return;
         }
+        // “发现/添加模型”是一个完整的发现入口：先打开结果窗口，再请求远端，
+        // 这样用户能看到加载状态、已有结果和失败后的重试按钮，而不是只看到按钮短暂转圈。
+        discoveryDialogOpen.value = true;
         discoveringProviderId.value = provider.id;
         try {
             await options.loadLibraries();

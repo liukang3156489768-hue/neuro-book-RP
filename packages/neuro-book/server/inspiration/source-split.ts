@@ -5,11 +5,16 @@ import {
     type InspirationSourceParagraphDto,
 } from "nbook/shared/dto/inspiration-source.dto";
 
-type SourceUnit = {
+export type SourceUnit = {
     firstParagraph: number;
     lastParagraph: number;
     characterCount: number;
     chapterIndex: number | null;
+};
+
+export type SourceUnitGroup = {
+    units: SourceUnit[];
+    characterCount: number;
 };
 
 export type InspirationSourceSplit = {
@@ -24,7 +29,7 @@ export type InspirationSourceSplit = {
 const CHAPTER_HEADING_PATTERN = /^(?:第[〇零一二三四五六七八九十百千万两\d]+[章节回部卷](?:\s|[：:、.．\-—]|$).{0,100}|第[〇零一二三四五六七八九十百千万两\d]+[章节回部卷][^。！？!?]{0,60}|(?:chapter|book|part)\s+(?:\d+|[ivxlcdm]+)(?:\s|[.:\-—]|$).{0,100}|(?:序章|序言|楔子|引子|尾声|终章|后记|番外)(?:\s|[：:、.．\-—]|$).{0,100})$/iu;
 
 /** Counts Unicode characters, excluding whitespace; offsets remain UTF-16 positions. */
-function countCharacters(text: string): number {
+export function countCharacters(text: string): number {
     let count = 0;
     for (const character of text) {
         if (!/\s/u.test(character)) count += 1;
@@ -32,9 +37,49 @@ function countCharacters(text: string): number {
     return count;
 }
 
-function chapterTitle(text: string): string | null {
-    const line = text.trim().replace(/^#{1,6}\s+/u, "").replace(/\s+#+$/u, "");
+/** The line text with surrounding whitespace and Markdown heading markers removed. */
+export function headingLineText(text: string): string {
+    return text.trim().replace(/^#{1,6}\s+/u, "").replace(/\s+#+$/u, "");
+}
+
+/** Returns the normalized heading when the line matches a heading pattern; "第X卷" also matches here. */
+export function chapterTitle(text: string): string | null {
+    const line = headingLineText(text);
     return CHAPTER_HEADING_PATTERN.test(line) ? line : null;
+}
+
+/**
+ * Groups whole units into chunks near the target size. Oversized units stand alone; smaller units
+ * choose the nearer whole boundary, so a unit is never split or merged across a better cut.
+ */
+export function groupSourceUnits(units: readonly SourceUnit[], targetCharacters: number): SourceUnitGroup[] {
+    const groups: SourceUnitGroup[] = [];
+    let pending: SourceUnit[] = [];
+    let pendingCharacters = 0;
+    const flush = () => {
+        if (pending.length === 0) return;
+        groups.push({units: pending, characterCount: pendingCharacters});
+        pending = [];
+        pendingCharacters = 0;
+    };
+    for (const unit of units) {
+        if (unit.characterCount > targetCharacters) {
+            flush();
+            pending.push(unit);
+            pendingCharacters = unit.characterCount;
+            flush();
+            continue;
+        }
+        if (pending.length > 0
+            && Math.abs(targetCharacters - pendingCharacters) <= Math.abs(targetCharacters - pendingCharacters - unit.characterCount)) {
+            flush();
+        }
+        pending.push(unit);
+        pendingCharacters += unit.characterCount;
+        if (pendingCharacters >= targetCharacters) flush();
+    }
+    flush();
+    return groups;
 }
 
 /**
@@ -109,14 +154,11 @@ export function splitInspirationSource(
     }
 
     const chunks: InspirationSourceChunkDto[] = [];
-    let pending: SourceUnit[] = [];
-    let pendingCharacters = 0;
-    const flush = () => {
-        if (pending.length === 0) return;
-        const first = paragraphs[pending[0]!.firstParagraph]!;
-        const last = paragraphs[pending[pending.length - 1]!.lastParagraph]!;
+    for (const group of groupSourceUnits(units, targetCharacters)) {
+        const first = paragraphs[group.units[0]!.firstParagraph]!;
+        const last = paragraphs[group.units[group.units.length - 1]!.lastParagraph]!;
         const chunkIndex = chunks.length + 1;
-        for (const unit of pending) {
+        for (const unit of group.units) {
             for (let index = unit.firstParagraph; index <= unit.lastParagraph; index += 1) {
                 paragraphs[index]!.chunkIndex = chunkIndex;
             }
@@ -127,30 +169,10 @@ export function splitInspirationSource(
             endOffset: last.endOffset,
             firstParagraphId: first.id,
             lastParagraphId: last.id,
-            characterCount: pendingCharacters,
-            chapterIndexes: pending.flatMap((unit) => unit.chapterIndex === null ? [] : [unit.chapterIndex]),
+            characterCount: group.characterCount,
+            chapterIndexes: group.units.flatMap((unit) => unit.chapterIndex === null ? [] : [unit.chapterIndex]),
         });
-        pending = [];
-        pendingCharacters = 0;
-    };
-    for (const unit of units) {
-        // Oversized chapters/paragraphs stand alone; smaller units choose the nearer whole boundary.
-        if (unit.characterCount > targetCharacters) {
-            flush();
-            pending.push(unit);
-            pendingCharacters = unit.characterCount;
-            flush();
-            continue;
-        }
-        if (pending.length > 0
-            && Math.abs(targetCharacters - pendingCharacters) <= Math.abs(targetCharacters - pendingCharacters - unit.characterCount)) {
-            flush();
-        }
-        pending.push(unit);
-        pendingCharacters += unit.characterCount;
-        if (pendingCharacters >= targetCharacters) flush();
     }
-    flush();
 
     const warnings: string[] = [];
     if (titles.size === 0 && paragraphs.length > 0) warnings.push("未识别到章节标题，已按完整自然段切分；每个非空自然行编号为一个段落。");

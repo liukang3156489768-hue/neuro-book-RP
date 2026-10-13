@@ -97,6 +97,30 @@ async function waitUntil(scope: EffectScope, predicate: () => boolean): Promise<
 }
 
 describe("大纲规划工作台 Project 会话", () => {
+    it("旧记录默认原创且不回写，改编偏好按项目保存并在切回后恢复", async () => {
+        const harness = createHarness();
+        harness.write(projectA, {mode: "auto", extension: "保留的未知字段"});
+        const scope = effectScope();
+        const current = ref<WorkbenchLayoutSurface>(surface(projectA));
+        const session = scope.run(() => useOutlineWorkbenchSession({surface: current, adapters: harness.adapters}))!;
+        try {
+            await waitUntil(scope, () => !session.loading.value);
+            expect(session.state.value).toMatchObject({creationMode: "original", mode: "auto"});
+            expect(harness.saves).toHaveLength(0);
+            expect(await session.commit({creationMode: "adaptation"})).toMatchObject({status: "saved"});
+            expect(harness.records.get(harness.key(projectA))?.value).toEqual({mode: "auto", extension: "保留的未知字段", creationMode: "adaptation"});
+            current.value = surface(projectB);
+            await waitUntil(scope, () => !session.loading.value && session.state.value.creationMode === "original");
+            expect(harness.records.has(harness.key(projectB))).toBe(false);
+            current.value = surface(projectA);
+            await waitUntil(scope, () => !session.loading.value && session.state.value.creationMode === "adaptation");
+            expect(harness.saves).toEqual([harness.key(projectA)]);
+        } finally {
+            scope.stop();
+            await session.release();
+        }
+    });
+
     it("缺失记录只回落默认值，主动提交后才写盘", async () => {
         const harness = createHarness();
         const scope = effectScope();

@@ -45,7 +45,7 @@ describe.skipIf(!credentials)("真实模型：大纲规划 Agent", () => {
         if (root) await rm(root, {recursive: true, force: true});
     });
 
-    it("discuss 模式下读取、预览后停在审批，批准后写入总纲", async () => {
+    it("discuss 模式下读取、预览后停在审批，批准后创建方案及其总纲", async () => {
         const setup = resolveAgentSmokeModelSetup();
         const created = await harness!.createAgent({
             profileKey: "outline.planner",
@@ -68,7 +68,7 @@ describe.skipIf(!credentials)("真实模型：大纲规划 Agent", () => {
                 "这是一次自动化验收，请严格按顺序调用工具，不要追问：",
                 "1. 调用 get_planning_context 读取当前规划；",
                 "2. 调用 get_foreshadowing_context，参数 {\"foreshadowingId\":\"fo-smoke\"}（伏笔不存在时报错也继续）；",
-                "3. 调用 preview_planning_change 预览创建总纲：operation 为 mutate，expectedRevision 用第 1 步读到的 revision，action 为 create-total，标题“总纲”，正文“主角在第一卷完成第一次选择。”；",
+                "3. 调用 preview_planning_change 预览创建方案：operation 为 mutate，expectedRevision 用第 1 步读到的 revision，action 为 create-plan，标题“主方案”（创建方案会同时创建该方案的空总纲）；",
                 "4. 调用 apply_planning_change 应用第 3 步的预览（带上 proposalId）。",
             ].join("\n")},
         });
@@ -99,6 +99,7 @@ describe.skipIf(!credentials)("真实模型：大纲规划 Agent", () => {
             "apply_planning_change",
         ]));
         const snapshot = await openProjectPlanning(projectWorkspaceRef("novel"));
-        expect(snapshot.entries.map((entry) => entry.value.title)).toContain("总纲");
+        expect(snapshot.manifest.plans.map((plan) => plan.title)).toEqual(["主方案"]);
+        expect(snapshot.entries.map((entry) => entry.value.title)).toContain("主方案·总纲");
     }, 300_000);
 });

@@ -18,7 +18,7 @@ export function resolvePiModelFromConfig(
     profileKey: string,
     override?: ModelOverrideInput | null,
 ): ResolvedPiModel {
-    const profileModelKey = config.agent.profiles[profileKey]?.model.modelKey ?? config.agent.profileModelDefaults.modelKey ?? null;
+    const profileModelKey = configuredProfileModel(config, profileKey)?.modelKey ?? config.agent.profileModelDefaults.modelKey ?? null;
     const modelKey = override?.modelKey ?? override?.model ?? profileModelKey ?? config.models.defaultModelKey;
     if (!modelKey) {
         throw new Error("配置未设置 models.default");
@@ -36,6 +36,12 @@ export function resolvePiModelFromConfig(
     }
 
     return resolvePiModelMetadata(providerId, provider, model);
+}
+
+/** Independent material review uses the assistant settings unless explicitly configured itself. */
+export function configuredProfileModel(config: Pick<EffectiveConfig, "agent">, profileKey: string): AgentProfileModelConfig | undefined {
+    return config.agent.profiles[profileKey]?.model
+        ?? (profileKey === "writing.material-review" ? config.agent.profiles["writing.assistant"]?.model : undefined);
 }
 
 /**

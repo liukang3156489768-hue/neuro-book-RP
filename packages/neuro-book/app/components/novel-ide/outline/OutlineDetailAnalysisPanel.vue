@@ -21,7 +21,10 @@ const props = defineProps<{
     chapterAdopted: boolean;
 }>();
 
+const root = ref<HTMLElement | null>(null);
 const issued = ref<IssuedDetailReport | null>(null);
+/** 从操作行采用时分析出偏离或冲突，提示作者在面板里处理。 */
+const notice = ref<string | null>(null);
 const confirmDeviations = ref(false);
 const resolutions = ref<Array<{decision: "resolved" | "ignored"; reason: string}>>([]);
 const decisionOptions = [{value: "resolved", label: "已在细纲中处理"}, {value: "ignored", label: "忽略"}];
@@ -31,6 +34,7 @@ watch(() => props.record.contentHash, () => {
     issued.value = null;
     confirmDeviations.value = false;
     resolutions.value = [];
+    notice.value = null;
 });
 
 const report = computed(() => issued.value?.report ?? null);
@@ -41,6 +45,7 @@ const canAdopt = computed(() => {
 });
 
 async function analyze(): Promise<void> {
+    notice.value = null;
     const {value, contentHash} = props.record;
     const result = await props.actions.run<IssuedDetailReport>("analyze-detail", {
         planId: props.planId, entryId: value.id, expectedRevision: props.revision,
@@ -61,8 +66,28 @@ async function adopt(): Promise<void> {
         reportId: current.report.reportId, confirmDeviations: confirmDeviations.value,
         resolutions: resolutions.value.map((item, index) => ({index, decision: item.decision, reason: item.reason.trim()})),
     }, {fallback: "细纲采用失败"});
-    if (result) issued.value = null;
+    if (result) {
+        issued.value = null;
+        notice.value = null;
+    }
 }
+
+/**
+ * 大纲库操作行的“正式采用”。报告只在方案修订号未变时沿用，否则服务端会拒绝采用；
+ * 没有偏离和冲突时直接采用，否则留给作者在面板里确认偏离、说明冲突处理。
+ */
+async function analyzeAndAdopt(): Promise<void> {
+    if (issued.value?.expectedRevision !== props.revision) await analyze();
+    if (!report.value) return;
+    if (report.value.deviations.length === 0 && report.value.conflicts.length === 0) {
+        await adopt();
+        return;
+    }
+    notice.value = "分析发现偏离或冲突，处理后点“正式采用细纲”。";
+    root.value?.scrollIntoView({block: "nearest", behavior: "smooth"});
+}
+
+defineExpose({analyzeAndAdopt});
 
 function describeWarning(warning: IssuedDetailReport["warnings"][number]): string {
     const subject = warning.locator ?? warning.path ?? "未说明的资料";
@@ -71,7 +96,7 @@ function describeWarning(warning: IssuedDetailReport["warnings"][number]): strin
 </script>
 
 <template>
-    <section class="analysis-panel" aria-label="细纲偏差分析">
+    <section ref="root" class="analysis-panel" aria-label="细纲偏差分析">
         <template v-if="props.record.value.status === 'adopted'">
             <h4>已正式采用</h4>
             <p v-if="props.record.value.analysis" class="analysis-summary">{{ props.record.value.analysis.summary }}</p>
@@ -93,6 +118,7 @@ function describeWarning(warning: IssuedDetailReport["warnings"][number]): strin
             </div>
             <p v-if="!props.chapterAdopted" class="analysis-hint">所属章节大纲尚未正式采用，先采用章节大纲再分析细纲。</p>
             <template v-if="report && issued">
+                <p v-if="notice" class="analysis-notice" role="status">{{ notice }}</p>
                 <p class="analysis-summary">{{ report.summary }}</p>
                 <div v-if="issued.warnings.length" class="analysis-block is-warning">
                     <strong>待补参考资料</strong>
@@ -128,6 +154,7 @@ function describeWarning(warning: IssuedDetailReport["warnings"][number]): strin
 .analysis-panel h4 { margin: 0; font-size: var(--text-sm); font-weight: var(--weight-medium); }
 .analysis-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-5); }
 .analysis-heading p, .analysis-hint, .analysis-block p { margin: var(--space-2) 0 0; color: var(--text-muted); font-size: var(--text-2xs); }
+.analysis-notice { margin: 0; color: var(--status-warning); font-size: var(--text-xs); }
 .analysis-summary { margin: 0; font-size: var(--text-xs); line-height: var(--leading-ui); white-space: pre-wrap; }
 .analysis-block { display: grid; gap: var(--space-3); font-size: var(--text-xs); }
 .analysis-block.is-warning { border: 1px solid var(--status-warning-border); border-radius: var(--radius-control); background: var(--status-warning-bg); padding: var(--space-4); color: var(--status-warning); }

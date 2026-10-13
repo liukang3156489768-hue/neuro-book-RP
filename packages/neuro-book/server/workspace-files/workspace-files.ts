@@ -217,6 +217,8 @@ type WorkspaceIconConfig = {
 
 /**
  * 判断 frontmatter 是否仍使用旧的 ext.character 角色字段。
+ * 角色管理工作台的 profile/meta 命名空间是当前合同；只有旧的扁平扩展
+ * （例如 logline/story）继续报告迁移提示，避免把新角色文件误报为遗留格式。
  */
 function hasLegacyCharacterExt(frontmatter: WorkspaceFrontmatter): boolean {
     const ext = frontmatter.ext;
@@ -224,7 +226,9 @@ function hasLegacyCharacterExt(frontmatter: WorkspaceFrontmatter): boolean {
         return false;
     }
     const character = (ext as Record<string, unknown>).character;
-    return typeof character === "object" && character !== null && !Array.isArray(character);
+    if (typeof character !== "object" || character === null || Array.isArray(character)) return false;
+    const value = character as Record<string, unknown>;
+    return !("profile" in value || "meta" in value);
 }
 
 /**

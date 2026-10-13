@@ -1,4 +1,3 @@
-import {renderMarkdownForeshadowMarker, type ForeshadowMarkerAction} from "nbook/shared/markdown-workbench";
 import type {OutlineWorkbenchForeshadowingDefinition} from "nbook/app/composables/useOutlineWorkbenchData";
 
 export type ForeshadowFormValue = {
@@ -53,31 +52,4 @@ export function formToCreateDesign(form: ForeshadowFormValue): Partial<{surface:
 /** 编辑时缺省表示沿用原值，因此清空的分项必须显式发送 null。 */
 export function formToEditDesign(form: ForeshadowFormValue): DesignPayload {
     return toDesign(form);
-}
-
-export type MarkerInsertion = Readonly<{body: string; selectionStart: number; selectionEnd: number}>;
-
-/**
- * 用伏笔标记包住选中文字。标记不能嵌套或交叉，选区触及已有标记时直接拒绝，
- * 否则保存时整篇正文会因解析失败被服务端拒绝。
- */
-export function insertForeshadowMarker(
-    body: string, start: number, end: number,
-    attrs: Readonly<{foreshadowId: string; action: ForeshadowMarkerAction; marker: string}>,
-): MarkerInsertion | string {
-    if (end <= start || !body.slice(start, end).trim()) return "请先在正文中选中要标记的文字";
-    if (/<!--|-->/u.test(body.slice(start, end)) || isInsideMarker(body, start)) return "选中的文字已在其他伏笔标记内，标记不能嵌套或交叉";
-    const wrapped = renderMarkdownForeshadowMarker(attrs, body.slice(start, end));
-    return {body: body.slice(0, start) + wrapped + body.slice(end), selectionStart: start, selectionEnd: start + wrapped.length};
-}
-
-function isInsideMarker(body: string, offset: number): boolean {
-    const before = body.slice(0, offset);
-    const lastOpen = before.search(/<!--\s*nb:foreshadow\b(?![\s\S]*<!--\s*nb:foreshadow\b)/u);
-    if (lastOpen < 0) return false;
-    return !/<!--\s*\/nb:foreshadow\b/u.test(before.slice(lastOpen));
-}
-
-export function createMarkerId(): string {
-    return `fm-${crypto.randomUUID()}`;
 }

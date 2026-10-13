@@ -176,6 +176,7 @@ export type EffectiveConfig = {
     models: ModelSettingsConfig;
     embedding: EmbeddingServiceConfig;
     agent: {
+        summarizerModelKey: string | null;
         defaultProfileKey: {
             novel: string | null;
             userAssets: string | null;
@@ -252,6 +253,7 @@ export type StoredGlobalConfig = {
     };
     embedding?: Partial<EmbeddingServiceConfig>;
     agent?: {
+        summarizerModelKey?: string | null;
         defaultProfileKey?: {
             novel?: string | null;
             userAssets?: string | null;

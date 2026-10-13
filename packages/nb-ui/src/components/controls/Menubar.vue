@@ -87,6 +87,7 @@ function scheduleLevel(item: MenubarItemData | null, trigger: HTMLElement, depth
                 </MenubarContent>
             </MenubarPortal>
         </MenubarMenu>
+        <Teleport to="body">
         <div
             v-for="(level, depth) in cascade.levels.value"
             :key="depth"
@@ -95,10 +96,12 @@ function scheduleLevel(item: MenubarItemData | null, trigger: HTMLElement, depth
             class="nb-ui-popover-surface nb-ui-menu-surface nb-menu-level fixed overflow-hidden p-1.5"
             :data-switching="level.switching"
             :style="{...level.style, zIndex: popoverZIndex + depth + 1}"
+            @click.stop
         >
             <div class="nb-menu-level-content">
                 <MenuNodes :items="level.value.children ?? []" :active="cascade.levels.value[depth + 1]?.value" @select="handleItemClick" @hover="(item, trigger, immediate) => scheduleLevel(item, trigger, depth + 1, immediate)" />
             </div>
         </div>
+        </Teleport>
     </MenubarRoot>
 </template>

@@ -12,6 +12,7 @@ import {
     createStoredToolResultFromResult,
     createStoredUserMessage,
     createTextToolResult,
+    EMPTY_USAGE,
     createToolResultFromResult,
     messageText,
 } from "nbook/server/agent/messages/message-utils";
@@ -52,6 +53,8 @@ import {projectRelatedSessions} from "nbook/server/agent/session/relation-projec
 import {SessionWriteExecutor} from "nbook/server/agent/session/write-plan";
 import type {AppendManySessionEntryDraft, ForcedAbortSessionWritePlan, SessionWriteEntryBatch, SessionWriteExecutionOptions, SessionWritePlan, SessionWriteResult, SessionWriteTimingSink} from "nbook/server/agent/session/write-plan";
 import {ToolSessionWriteSink} from "nbook/server/agent/session/tool-session-write-sink";
+import {planToolContextPruning} from "nbook/server/agent/session/tool-context-projection";
+import {estimateFinalRequestTokens, estimateRequestOverheadTokens, estimateRequestMessageTokens} from "nbook/server/agent/messages/request-tokens";
 import {relationLedgerChange} from "nbook/server/agent/session/relation-ledger";
 
 
@@ -89,7 +92,7 @@ import {PUBLIC_TOOL_ARGS_TEXT_BYTES} from "nbook/server/agent/events/public-even
 import {projectPublicSessionSummarizerState, projectPublicSessionSummary} from "nbook/server/agent/events/public-session-projection";
 import {assertPublicClientVariablePatch, projectPublicControlReason} from "nbook/server/agent/events/public-control-event-projection";
 import {projectPublicFinalMessage} from "nbook/server/agent/events/public-invocation-result-projection";
-import {appendCompaction, compactIfNeeded, resolveCompactionOptions, resolveCompactionTriggerTokens} from "nbook/server/agent/harness/compaction";
+import {appendCompaction, compactIfNeeded, resolveCompactionOptions, resolveCompactionTriggerTokens, shouldCompactWithOptions, type CompactionProgress} from "nbook/server/agent/harness/compaction";
 import {resolveAgentVisibleModels} from "nbook/server/agent/harness/agent-visible-models";
 import type {
     PendingSessionWritePlan,
@@ -118,13 +121,20 @@ import {isEmptyObjectSchema, isReportResultBinding, reportResultSchemaForProfile
 import {resolveRuntimeProfileSettings} from "nbook/server/agent/profiles/profile-settings";
 import {createLayeredProfileHomeFacade, ensureGlobalProfileHome, ensureProfileHome, type ProfileHomeFacade} from "nbook/server/agent/profiles/profile-home";
 import {assemblePersistedProfilePromptMessages} from "nbook/server/agent/profiles/prompt-order";
+import {usePromptManagement} from "nbook/server/prompt-management/service";
+import {AGENT_PROMPT_SNAPSHOT_KEY, WRITER_COMPILED_PROMPT_KEY, isManagedAgentProfile, prepareManagedAgentPrompt, restoreFrozenWriterPrompt, type ManagedAgentPrompt} from "nbook/server/prompt-management/agent-runtime";
+import {FrozenWriterPromptSchema} from "nbook/shared/dto/tavern-preset.dto";
+import {applyTavernGeneration, resolveTavernCustomReasoningEffort} from "nbook/server/prompt-management/tavern-provider-generation";
+import {prepareTavernBudget} from "nbook/server/prompt-management/tavern-budget";
+import {normalizeToolResultDetails} from "nbook/server/agent/messages/message-utils";
+import type {PromptSnapshot} from "nbook/shared/dto/prompt-management.dto";
 import {
     materializeProfileTurnContexts,
     mergeProfileTurnContextMessages,
     settleProfileTurnContexts,
     type ProfileTurnContextSettlement,
 } from "nbook/server/agent/profiles/profile-turn-context";
-import {resolvePiApiKeyForModelFromConfig, resolvePiModelFromConfig} from "nbook/server/agent/harness/model-resolver";
+import {configuredProfileModel, resolvePiApiKeyForModelFromConfig, resolvePiModelFromConfig} from "nbook/server/agent/harness/model-resolver";
 import {resolvePiModelsFromConfig} from "nbook/server/agent/harness/pi-runtime-resolver";
 import {mergePiRequestHeaders, parsePiSimpleRequestOptions, piRequestAuthOptions} from "nbook/server/agent/harness/pi-request-options";
 import {planModeDirectory, planModeToolDirectory, resolvePlanModeFile} from "nbook/server/agent/plan-mode-path";
@@ -170,6 +180,7 @@ import type {
     AgentFollowUpQueueStateDto,
     AgentPendingApprovalDto,
     AgentRuntimeStreamEventDto,
+    AgentCompactionStateDto,
     AgentSessionContextUsageDto,
     AgentSessionAttachmentItemDto,
     AgentSessionAttachmentListQueryDto,
@@ -198,6 +209,7 @@ import {appLogger} from "nbook/server/app-logs/logger";
 import {PiRequestRecorder} from "nbook/server/agent/observability/pi-request-recorder";
 import type {PiTraceCorrelation, PiTraceKind} from "nbook/server/agent/observability/pi-request-recorder";
 import {tracedStreamSimple} from "nbook/server/agent/observability/traced-provider";
+import {prepareOrderedProviderRequest} from "nbook/server/prompt-management/ordered-provider-request";
 import {aggregateSegmentLabels, buildTraceSegments, computeToolsHash, type PromptPrefixAttribution} from "nbook/server/agent/observability/trace-segments";
 import {buildContextDiagnostics} from "nbook/server/agent/observability/context-diagnostics";
 import {emptyContextFacts, resolveModelCacheRetention, timelineDto} from "nbook/server/agent/observability/context-inspection";
@@ -314,6 +326,8 @@ type PreparedRun = {
     profile: AgentProfile;
     prepared: ProfileTurnPlan;
     systemPrompt: string;
+    managedPromptMessages?: StoredAgentMessage[];
+    orderedPromptMessages?: RunFrame["orderedPromptMessages"];
     messages: StoredAgentMessage[];
     /** messages 前缀的分区归因（Task 126 可观测）。 */
     promptPrefix: PromptPrefixAttribution;
@@ -544,6 +558,8 @@ export class NeuroAgentHarness {
     private readonly toolExecution: ToolExecutionMode;
     private readonly enableSessionSummarizer: boolean;
     private readonly activeInvocations = new Map<number, AgentActiveInvocationDto>();
+    private readonly compactionStates = new Map<number, AgentCompactionStateDto>();
+    private readonly requestOverheads = new Map<number, number>();
     /**
      * 已提交审批、批准后仍在同步执行的 tool call（仅本进程运行期）。pending 由“有 tool call 无 tool result”派生，
      * 长耗时工具（委派子 Agent、workflow）执行期间若仍对外投影为待处理，审批面板会一直停留到执行结束。
@@ -832,6 +848,13 @@ export class NeuroAgentHarness {
         }
         const currentProjectRoot = input.currentProjectRoot ?? parentSnapshot?.metadata.currentProjectRoot;
         if (currentProjectRoot) requireActiveReadyProject(projectWorkspaceRef(currentProjectRoot));
+        const promptSnapshot = this.runtimePaths && isManagedAgentProfile(input.profileKey)
+            ? input.promptSnapshotId
+                ? await usePromptManagement(this.runtimePaths).readSnapshot(input.promptSnapshotId)
+                : parentSnapshot
+                    ? await this.promptSnapshotForSession(parentSnapshot.metadata.sessionId)
+                    : await usePromptManagement(this.runtimePaths).capture(input.promptSnapshotMode ?? "active")
+            : null;
         await mkdir(this.workspaceRoot, {recursive: true});
         const snapshot = await this.repo.createSession({
             profileKey: input.profileKey,
@@ -842,6 +865,13 @@ export class NeuroAgentHarness {
             kind: input.kind,
             tags: input.tags,
         });
+        if (promptSnapshot) {
+            await this.executeWritePlan({
+                target: {sessionId: snapshot.metadata.sessionId},
+                cause: "agent.session.prompt_snapshot",
+                ops: [{kind: "append", entry: {type: "custom", origin: "projection", key: AGENT_PROMPT_SNAPSHOT_KEY, value: promptSnapshot.id}}],
+            });
+        }
         const initialModel = await this.resolveInitialSessionModel(snapshot);
         if (initialModel) {
             await this.executeWritePlan({
@@ -910,6 +940,94 @@ export class NeuroAgentHarness {
      */
     async readSessionContext(sessionId: number): Promise<NeuroSessionContext> {
         return this.repo.reduce(await this.repo.readSession(sessionId));
+    }
+
+    /** Existing sessions without a binding adopt only the immutable built-in version; user preset changes cannot affect their descendants. */
+    async promptSnapshotForSession(sessionId: number): Promise<PromptSnapshot | null> {
+        if (!this.runtimePaths) return null;
+        const snapshot = await this.repo.readSession(sessionId);
+        const value = this.repo.reduce(snapshot).customState[AGENT_PROMPT_SNAPSHOT_KEY];
+        const management = usePromptManagement(this.runtimePaths);
+        if (typeof value === "string") return management.readSnapshot(value);
+        const identity = snapshot.metadata.sessionIdentity ?? `${snapshot.metadata.sessionId}:${snapshot.metadata.createdAt}`;
+        return management.bind(`agent.session:${identity}`, {mode: "builtin"});
+    }
+
+    private async managedPromptForSession(snapshot: SessionSnapshot, payload?: JsonValue): Promise<ManagedAgentPrompt | null> {
+        if (!isManagedAgentProfile(snapshot.metadata.profileKey) || !this.runtimePaths) return null;
+        const version = await this.promptSnapshotForSession(snapshot.metadata.sessionId);
+        if (!version) return null;
+        if (snapshot.metadata.profileKey === "writing.writer") {
+            const frozen = this.repo.reduce(snapshot).customState[WRITER_COMPILED_PROMPT_KEY];
+            if (frozen !== undefined) {
+                const prompt = restoreFrozenWriterPrompt(frozen);
+                if (prompt.writerCompilation!.snapshotId !== version.id) throw new Error("写手编译结果与提示词版本不一致");
+                return prompt;
+            }
+        }
+        const initial = snapshot.metadata.initial;
+        const purposeId = initial && typeof initial === "object" && !Array.isArray(initial) && typeof initial.managedPurposeId === "string"
+            ? initial.managedPurposeId : undefined;
+        const purpose = purposeId ? version.purposes[purposeId] : undefined;
+        let prompt: ManagedAgentPrompt | null;
+        if (snapshot.metadata.profileKey === "writing.writer" && purpose?.tavern) {
+            const identity = snapshot.metadata.sessionIdentity ?? `${snapshot.metadata.sessionId}:${snapshot.metadata.createdAt}`;
+            const persistence = purpose.tavern.bindings.variablePersistence !== "isolated" && Boolean(snapshot.metadata.currentProjectRoot);
+            let owner = snapshot;
+            if (persistence) {
+                const visited = new Set<number>([owner.metadata.sessionId]);
+                while (owner.metadata.parentSessionId !== undefined && owner.metadata.profileKey !== "writing.lead") {
+                    const parent = await this.repo.readSession(owner.metadata.parentSessionId);
+                    if (visited.has(parent.metadata.sessionId)) throw new Error("写手会话父链形成循环");
+                    if (parent.metadata.currentProjectRoot !== snapshot.metadata.currentProjectRoot) break;
+                    visited.add(parent.metadata.sessionId);
+                    owner = parent;
+                }
+            }
+            const ownerKey = initial && typeof initial === "object" && !Array.isArray(initial) && typeof initial.tavernOwnerKey === "string"
+                ? initial.tavernOwnerKey : owner.metadata.sessionIdentity ?? `${owner.metadata.sessionId}:${owner.metadata.createdAt}`;
+            const budget = await prepareTavernBudget(purpose.tavern);
+            const compiled = await usePromptManagement(this.runtimePaths).compileWriter({
+                projectRoot: persistence ? snapshot.metadata.currentProjectRoot! : `isolated:${identity}`, ownerKey,
+                purposeId: purposeId!, presetId: purpose.presetId, attemptKey: identity,
+            }, {local: {...purpose.tavern.bindings.localVariables}, global: {...purpose.tavern.bindings.globalVariables}}, variables => {
+                const prepared = prepareManagedAgentPrompt(version, snapshot.metadata.profileKey, initial, payload, variables, budget);
+                if (!prepared?.writerCompilation) throw new Error("酒馆写手编译未返回可冻结结果");
+                return prepared.writerCompilation;
+            });
+            if (compiled.snapshotId !== version.id) throw new Error("写手编译收据与提示词版本不一致");
+            prompt = restoreFrozenWriterPrompt(compiled);
+        } else prompt = prepareManagedAgentPrompt(version, snapshot.metadata.profileKey, initial, payload);
+        if (prompt?.writerCompilation) {
+            const compiled = prompt.writerCompilation;
+            await this.executeWritePlan({target: {sessionId: snapshot.metadata.sessionId}, cause: "agent.session.writer_compiled_prompt",
+                ops: [{kind: "append", entry: {type: "custom", origin: "projection", key: WRITER_COMPILED_PROMPT_KEY,
+                    value: normalizeToolResultDetails(compiled)}}],
+            });
+        }
+        return prompt;
+    }
+
+    /** Review and recovery consume the persisted request prefix without evaluating stateful macros again. */
+    async compiledWriterPromptForSession(sessionId: number) {
+        const snapshot = await this.repo.readSession(sessionId);
+        const value = this.repo.reduce(snapshot).customState[WRITER_COMPILED_PROMPT_KEY];
+        return value === undefined ? null : FrozenWriterPromptSchema.parse(value);
+    }
+
+    /** Writing's port freezes its processed output after the provider transcript, on the same durable session branch. */
+    async freezeWriterOutput(sessionId: number, output: JsonValue, expectedResponseLeaf: string | null): Promise<string> {
+        return this.withSessionMutation(sessionId, async () => {
+            const snapshot = await this.repo.readSession(sessionId);
+            if (snapshot.metadata.profileKey !== "writing.writer") throw new Error("只有写手会话可以保存写作输出记录");
+            if ((snapshot.leafId ?? null) !== expectedResponseLeaf) throw new Error("写手回复游标已变化，不能冻结到其他分支");
+            const entries = await this.executeWritePlan({target: {sessionId}, cause: "agent.session.writer_output", ops: [{kind: "append", entry: {
+                type: "custom", origin: "projection", key: "prompt.management.writer.output", value: output,
+            }}]});
+            const entry = entries.find(value => value.type === "custom" && value.key === "prompt.management.writer.output");
+            if (!entry) throw new Error("写手输出保存后缺少 durable entry ID");
+            return entry.id;
+        });
     }
 
     /** 重新绑定或清除Session Current Project；运行中与等待中的Session禁止变更归属。 */
@@ -1342,6 +1460,7 @@ export class NeuroAgentHarness {
                 modelKey: invocationModelKey,
                 thinkingLevel: input.thinkingLevel,
                 requestOptionsPatch: input.requestOptionsPatch,
+                abortSignal: abortController.signal,
                 clientMessageId: input.clientMessageId,
                 intent: input.mode === "steer" ? "steer" : "normal",
                 sourceQueueItemId: input.sourceQueueItemId,
@@ -1370,6 +1489,8 @@ export class NeuroAgentHarness {
                 workspaceRoot: this.workspaceRoot,
                 currentProject,
                 systemPrompt: preparedRun.systemPrompt,
+                managedPromptMessages: preparedRun.managedPromptMessages,
+                orderedPromptMessages: preparedRun.orderedPromptMessages,
                 messages: preparedRun.messages,
                 promptPrefix: preparedRun.promptPrefix,
                 models: preparedRun.models,
@@ -1713,6 +1834,7 @@ export class NeuroAgentHarness {
         // 所有可等待 policy/input/queue 工作已经结束；ready 返回后必须同步登记 operation。
         const currentProject = await this.captureInvocationProject(input.sessionId, metadata);
         this.activeInvocations.set(input.sessionId, activeInvocation);
+        if (!isResume) this.compactionStates.delete(input.sessionId);
         this.steerableSessions.add(input.sessionId);
         this.abortControllers.set(input.sessionId, abortController);
         this.invocationClientStates.set(invocationId, input.clientState);
@@ -1970,6 +2092,7 @@ export class NeuroAgentHarness {
         modelKey?: string;
         thinkingLevel?: ThinkingLevel;
         requestOptionsPatch?: Record<string, JsonValue>;
+        abortSignal?: AbortSignal;
         /** 当前用户输入的稳定关联 ID；continue/resolution 为空。 */
         clientMessageId?: string;
         intent: "normal" | "steer";
@@ -2078,7 +2201,8 @@ export class NeuroAgentHarness {
         const toolKeys = [...runProfile.rootToolKeys];
         const executionToolKeys = runProfile.toolKeys ? [...runProfile.toolKeys] : undefined;
         const thinkingLevel = input.thinkingLevel ?? this.resolveThinkingLevel(context, config, model);
-        const systemPrompt = prepareRunHooks.profilePrompt ? prepared.plan.systemPrompt ?? context.systemPrompt : context.systemPrompt;
+        const managedPrompt = await this.managedPromptForSession(snapshot, preparedInvocation.payload);
+        const systemPrompt = managedPrompt?.systemPrompt ?? (prepareRunHooks.profilePrompt ? prepared.plan.systemPrompt ?? context.systemPrompt : context.systemPrompt);
         const preparedModelContextMessages = prepareRunHooks.sessionContext === true ? prepared.plan.modelContextMessages ?? [] : [];
         const appendingCount = prepareRunHooks.sessionContext === true
             ? (prepared.plan.modelContextAppendingMessages?.length ?? 0) + (prepared.plan.appendingMessages?.length ?? 0)
@@ -2087,21 +2211,80 @@ export class NeuroAgentHarness {
             ...prepareRunHooks.runtimeMessages,
             ...preparedModelContextMessages,
         ];
-        const messages = assemblePersistedProfilePromptMessages({
-            persistedMessages: context.messages,
+        const compaction = managedPrompt?.writerCompilation?.tavern
+            ? {...prepared.runtimeSettings.compaction, enabled: false}
+            : prepared.runtimeSettings.compaction;
+        const requestTools = this.tools.allowedWithOverrides(toolKeys, await this.toolOverrides(toolKeys, context.profileKey, this.profiles.parseInitial(runProfile, snapshot.metadata.initial)));
+        const requestOverheadTokens = estimateRequestOverheadTokens({systemPrompt, tools: requestTools})
+            + modelContext.reduce((tokens, message) => tokens + estimateRequestMessageTokens(message), 0);
+        if (!managedPrompt?.writerCompilation?.tavern) this.requestOverheads.set(input.sessionId, requestOverheadTokens);
+        // A resumed invocation has no previous turn to run the continuation-only compaction check.
+        let reinjectedCount = 0;
+        await withRunKernelPhase("compaction", async () => {
+            if (!context.messages.length) return;
+            const compacted = await this.compactModelContext({
+                repo: this.repo, snapshot,
+                messages: context.messages,
+                minRecentMessages: appendingCount + (input.pendingUserMessage ? 1 : 0),
+                models, model, apiKey,
+                systemPrompt, tools: requestTools,
+                requestOverheadTokens,
+                timeoutMs: providerOptions.timeoutMs,
+                requestOptions: {...providerOptions.requestOptions, ...this.profileRequestOptions(config, context.profileKey), ...(input.requestOptionsPatch ?? {})},
+                thinkingLevel, compaction, signal: input.abortSignal,
+                trace: this.traceBinding(config, {kind: "compaction", sessionId: input.sessionId, invocationId: input.invocationId, profileKey: context.profileKey}),
+                writeCompactionEntry: async (entry) => {
+                    await new ToolSessionWriteSink({executor: this.writeExecutor, sessionId: input.sessionId, invocationId: input.invocationId})
+                        .append("compact.auto", entry);
+                },
+            }, input.invocationId);
+            if (compacted && !managedPrompt && prepareRunHooks.sessionContext && prepared.plan.historyInitMessages?.length) {
+                reinjectedCount = prepared.plan.historyInitMessages.length;
+                await this.executeWritePlan({
+                    target: {sessionId: input.sessionId}, cause: "compact.history_set",
+                    ops: [{kind: "appendMany", entries: prepared.plan.historyInitMessages.map(message => ({
+                        type: "custom_message" as const, message, visibleToModel: true,
+                    }))}],
+                }, input.invocationId);
+            }
+            snapshot = await this.repo.readSession(input.sessionId);
+            context = this.repo.reduce(snapshot);
+        });
+        const tailCount = appendingCount + (input.pendingUserMessage ? 1 : 0);
+        // Reinjected HistorySet is durable, but the provider order must still end with AppendingSet and the current input.
+        const reinjected = reinjectedCount ? context.messages.slice(-reinjectedCount) : [];
+        const originalOrder = reinjectedCount ? context.messages.slice(0, -reinjectedCount) : context.messages;
+        const historyEnd = originalOrder.length - tailCount;
+        const persistedMessages = reinjectedCount
+            ? [...originalOrder.slice(0, historyEnd), ...reinjected, ...originalOrder.slice(historyEnd)]
+            : originalOrder;
+        const assembledMessages = assemblePersistedProfilePromptMessages({
+            persistedMessages,
             modelContext,
             appendingCount,
             currentUserInputCount: input.pendingUserMessage ? 1 : 0,
         });
+        // Writer templates include the current task, while other Agents retain the live invocation after the pre-input sequence.
+        const messages = managedPrompt
+            ? [...managedPrompt.messages, ...(managedPrompt.replacesInvocation && input.pendingUserMessage ? assembledMessages.slice(0, -1) : assembledMessages)]
+            : assembledMessages;
         this.assertNoUnclosedToolCallsForModel(storedMessagesForText(messages) as AgentMessage[], this.userResolutionToolKeysForProfile(runProfile));
         // 必须在下面重读 snapshot / context 之前算：归因描述的是上面这份 messages 数组。
         const promptPrefix = buildPromptPrefixAttribution({
             snapshot,
-            persistedMessages: context.messages,
+            persistedMessages,
             modelContextCount: modelContext.length,
             appendingCount,
             currentUserInputCount: input.pendingUserMessage ? 1 : 0,
         });
+        if (managedPrompt) {
+            if (managedPrompt.replacesInvocation && input.pendingUserMessage) {
+                promptPrefix.kinds.pop();
+                promptPrefix.labels.pop();
+            }
+            promptPrefix.kinds.unshift(...managedPrompt.messages.map(() => "modelContext" as const));
+            promptPrefix.labels.unshift(...managedPrompt.messages.map(() => ["全局提示词预设"]));
+        }
 
         snapshot = await this.repo.readSession(input.sessionId);
         context = this.repo.reduce(snapshot);
@@ -2111,14 +2294,21 @@ export class NeuroAgentHarness {
             profile: runProfile,
             prepared: prepared.plan,
             systemPrompt,
+            managedPromptMessages: managedPrompt?.messages,
+            orderedPromptMessages: managedPrompt?.orderedMessages,
             messages,
             promptPrefix,
             models,
             model,
             apiKey,
             timeoutMs: providerOptions.timeoutMs,
-            requestOptions: {...providerOptions.requestOptions, ...(input.requestOptionsPatch ?? {})},
-            compaction: prepared.runtimeSettings.compaction,
+            requestOptions: {
+                ...providerOptions.requestOptions,
+                ...this.profileRequestOptions(config, context.profileKey),
+                ...(managedPrompt?.writerCompilation?.generation?.temperature === undefined ? {} : {temperature: managedPrompt.writerCompilation.generation.temperature}),
+                ...(input.requestOptionsPatch ?? {}),
+            },
+            compaction,
             fileChangeDiffMaxChars: prepared.runtimeSettings.fileChangeNotice.diffMaxChars,
             piTrace: this.piTraceSettings(config),
             sessionContextEnabled: prepareRunHooks.sessionContext === true,
@@ -2507,6 +2697,7 @@ export class NeuroAgentHarness {
             steerQueue: {count: this.steerQueues.get(sessionId)?.length ?? 0},
             followUpQueue: this.followUpQueueSummary(sessionId, projection.context),
             activeInvocation: projection.activeInvocation,
+            compaction: this.sessionCompactionState(sessionId, projection.activeInvocation),
             model: projectSessionModelRef(model),
             thinkingLevel: projection.context.thinkingLevel,
             effectiveThinkingLevel,
@@ -2753,6 +2944,7 @@ export class NeuroAgentHarness {
             steerQueue: projectQueuedMessages(this.steerQueues.get(sessionId) ?? []),
             followUpQueue: this.publicFollowUpQueue(followUpQueue),
             activeInvocation: projection.activeInvocation,
+            compaction: this.sessionCompactionState(sessionId, projection.activeInvocation),
             model: projectSessionModelRef(model),
             thinkingLevel: context.thinkingLevel,
             effectiveThinkingLevel,
@@ -2986,6 +3178,8 @@ export class NeuroAgentHarness {
         if (!profile) {
             return undefined;
         }
+        const managed = await this.managedPromptForSession(snapshot);
+        if (managed) return managed.systemPrompt;
         const profileContext = profile.context;
         if (!this.hasBuiltinHook(profile, "builtin.profilePrompt") || !profileContext) {
             return undefined;
@@ -3288,13 +3482,29 @@ export class NeuroAgentHarness {
             };
         }
         if (body.command === "fork") {
+            // Fork 的来源版本属于源 Session 的历史语义；不能在创建 fork 时重新读取当前 active 预设。
+            const sourcePromptSnapshot = this.runtimePaths && isManagedAgentProfile(snapshot.metadata.profileKey)
+                ? await this.promptSnapshotForSession(sessionId)
+                : null;
             const forked = await this.repo.forkSession(sessionId, body.entryId ?? snapshot.leafId ?? undefined);
+            if (sourcePromptSnapshot) {
+                await this.executeWritePlan({
+                    target: {sessionId: forked.metadata.sessionId},
+                    cause: "agent.session.prompt_snapshot.fork",
+                    ops: [{kind: "append", entry: {
+                        type: "custom",
+                        origin: "projection",
+                        key: AGENT_PROMPT_SNAPSHOT_KEY,
+                        value: sourcePromptSnapshot.id,
+                    }}],
+                });
+            }
             await measureAgentTimingStep(timing, "liveState", () => this.publishSessionState(forked.metadata.sessionId));
             return {
                 kind: "created_session",
                 status: "completed",
                 sessionId: forked.metadata.sessionId,
-                createdSession: (await this.resolveSessionRuntimeProjection(forked.metadata.sessionId, forked, timing)).summary,
+                createdSession: (await this.resolveSessionRuntimeProjection(forked.metadata.sessionId, undefined, timing)).summary,
             };
         }
         if (body.command === "rename") {
@@ -4076,6 +4286,7 @@ export class NeuroAgentHarness {
         });
         const preparedWithTurnContext: ProfileTurnPlan = {
             ...prepared,
+            ...(await this.managedPromptForSession(snapshot, options.invocationPayload) ? {historyInitMessages: []} : {}),
             appendingMessages: mergeProfileTurnContextMessages(prepared.appendingMessages ?? [], materializedTurnContexts.insertions),
         };
         const writePlan = compilePrepareRunWritePlan({
@@ -4121,6 +4332,7 @@ export class NeuroAgentHarness {
 
     private async runSessionSummarizerJob(sourceSessionId: number, job: SessionSummarizerJob): Promise<void> {
         let summarizerSettings: ProfileRuntimeSettings["summarizer"] | undefined;
+        let effectiveConfig: Awaited<ReturnType<typeof loadEffectiveConfig>> | undefined;
         do {
             job.rerunRequested = false;
             const force = job.forceRequested;
@@ -4133,12 +4345,12 @@ export class NeuroAgentHarness {
             const profiles = this.profileCatalogForProject(currentProject);
             const sourceProfile = await profiles.get(sourceSnapshot.metadata.profileKey);
             if (!summarizerSettings) {
-                const effectiveConfig = await loadEffectiveConfig(resolveNonInvocationConfigTarget(sourceSnapshot.metadata, this.workspaceRoot));
+                effectiveConfig = await loadEffectiveConfig(resolveNonInvocationConfigTarget(sourceSnapshot.metadata, this.workspaceRoot));
                 summarizerSettings = this.resolveProfileRuntimeSettings(sourceProfile, effectiveConfig).summarizer;
             }
             const config = resolveProfileSummarizer(summarizerSettings, force);
             if (!config) continue;
-            await this.runSessionSummarizer(sourceSnapshot, config, force);
+            await this.runSessionSummarizer(sourceSnapshot, config, force, effectiveConfig);
             const latest = await this.repo.readSession(sourceSessionId);
             const latestState = this.readSummarizerState(this.repo.reduce(latest));
             if (latestState.dirty && this.shouldAttemptDirtySummarizerRerun(latestState)) job.rerunRequested = true;
@@ -4157,7 +4369,12 @@ export class NeuroAgentHarness {
     }
 
     /** 运行一次 summarizer preflight + 隐藏 run。 */
-    private async runSessionSummarizer(sourceSnapshot: SessionSnapshot, config: NonNullable<ReturnType<typeof resolveProfileSummarizer>>, force = false): Promise<void> {
+    private async runSessionSummarizer(
+        sourceSnapshot: SessionSnapshot,
+        config: NonNullable<ReturnType<typeof resolveProfileSummarizer>>,
+        force = false,
+        effectiveConfig?: Awaited<ReturnType<typeof loadEffectiveConfig>>,
+    ): Promise<void> {
         const profileKey = config.profileKey;
         const summarizerInput = this.summarizerInput(sourceSnapshot.metadata.sessionId, config.input);
         const summarizerInputFingerprint = stableJsonHash({profileKey, initial: summarizerInput});
@@ -4202,6 +4419,7 @@ export class NeuroAgentHarness {
         const result = await this.invokeAgent({
             sessionId: summarizerSession.metadata.sessionId,
             mode: "continue",
+            ...(effectiveConfig?.agent.summarizerModelKey ? {modelKey: effectiveConfig.agent.summarizerModelKey} : {}),
             caller: {kind: "system", sessionId: sourceSnapshot.metadata.sessionId, profileKey: sourceSnapshot.metadata.profileKey},
             messageIdentity: "system",
             internalQueued: true,
@@ -4637,6 +4855,8 @@ export class NeuroAgentHarness {
         workspaceRoot: AbsoluteFsPath;
         currentProject: ReadyProjectSessionRef | null;
         systemPrompt: string;
+        managedPromptMessages?: StoredAgentMessage[];
+        orderedPromptMessages?: RunFrame["orderedPromptMessages"];
         messages: StoredAgentMessage[];
         promptPrefix?: PromptPrefixAttribution;
         models: Models;
@@ -4946,18 +5166,27 @@ export class NeuroAgentHarness {
         });
         const toolOverrides = await this.toolOverrides(toolKeys, frame.profileKey, this.profiles.parseInitial(frame.profile, snapshot.metadata.initial));
         const tools = this.tools.allowedWithOverrides(toolKeys, toolOverrides);
-        if (!frame.compaction?.enabled) {
-            this.assertContextWithinWindow({
-                messages: modelMessages,
-                model: frame.model,
-                profileKey: frame.profileKey,
-            });
+        if (!frame.orderedPromptMessages) {
+            const messagesTokens = modelMessages.reduce((total, message) => total + estimateRequestMessageTokens(message), 0);
+            const historyTokens = context.messages.reduce((total, message) => total + estimateRequestMessageTokens(message), 0);
+            this.requestOverheads.set(frame.sessionId, estimateRequestOverheadTokens({systemPrompt: frame.systemPrompt, tools})
+                + Math.max(0, messagesTokens - historyTokens));
         }
+        // 酒馆写手在 streamAssistant 以冻结编排和预设输出额度检查最终请求。
+        if (!frame.orderedPromptMessages) this.assertContextWithinWindow({
+            messages: modelMessages,
+            model: frame.model,
+            profileKey: frame.profileKey,
+            compaction: frame.compaction,
+            systemPrompt: frame.systemPrompt, tools,
+        });
         return {
             index: frame.turnIndex,
             sessionSnapshot: snapshot,
             sessionContext: context,
             systemPrompt: frame.systemPrompt,
+            orderedPromptMessages: frame.orderedPromptMessages,
+            managedPromptMessageCount: frame.managedPromptMessages?.length,
             modelMessages,
             promptPrefix: frame.promptPrefix,
             models: frame.models,
@@ -5139,13 +5368,16 @@ export class NeuroAgentHarness {
         if (nextTurnHooks.reportResultReminder !== undefined) {
             frame.reportResultReminderEnabled = nextTurnHooks.reportResultReminder;
         }
+        frame.nextTurnRuntimeMessages = nextTurnHooks.runtimeMessages;
         const compacted = await withRunKernelPhase("compaction", () => this.compactBeforeNextTurn(frame));
         if (compacted) {
             await withRunKernelPhase("ingest", () => this.reinjectHistorySetAfterCompaction(frame));
             const compactedSnapshot = await this.repo.readSession(frame.sessionId);
             frame.messages = this.repo.reduce(compactedSnapshot).messages;
+            // A previous turn's explicit transcript anchor would fork the next write before the compaction receipt.
+            frame.transcriptParentLeafId = compactedSnapshot.leafId;
+            if (frame.managedPromptMessages) frame.messages.unshift(...frame.managedPromptMessages);
         }
-        frame.nextTurnRuntimeMessages = nextTurnHooks.runtimeMessages;
     }
 
     private async compactBeforeNextTurn(frame: RunFrame): Promise<boolean> {
@@ -5156,12 +5388,17 @@ export class NeuroAgentHarness {
             this.assertContextWithinWindow(frame);
             return false;
         }
-        const compacted = await compactIfNeeded({
+        const requestTools = this.tools.allowedWithOverrides(frame.toolKeys, await this.toolOverrides(frame.toolKeys, frame.profileKey, this.profiles.parseInitial(frame.profile, (await this.repo.readSession(frame.sessionId)).metadata.initial)));
+        const compacted = await this.compactModelContext({
             repo: this.repo,
             snapshot: await this.repo.readSession(frame.sessionId),
             messages: frame.messages,
             models: frame.models,
             model: frame.model,
+            systemPrompt: frame.systemPrompt,
+            tools: requestTools,
+            requestOverheadTokens: estimateRequestOverheadTokens({systemPrompt: frame.systemPrompt, tools: requestTools})
+                + frame.nextTurnRuntimeMessages.reduce((tokens, message) => tokens + estimateRequestMessageTokens(message), 0),
             apiKey: frame.apiKey,
             thinkingLevel: frame.thinkingLevel,
             timeoutMs: frame.timeoutMs,
@@ -5176,15 +5413,95 @@ export class NeuroAgentHarness {
                     invocationId: frame.invocationId,
                 }).append("compact.auto", entry);
             },
-        });
+        }, frame.invocationId);
+        frame.transcriptParentLeafId = (await this.repo.readSession(frame.sessionId)).leafId;
         frame.automaticCompactionDoneForTurn = compacted;
         return compacted;
+    }
+
+    private sessionCompactionState(sessionId: number, active: AgentActiveInvocationDto | null): AgentCompactionStateDto | null {
+        const state = this.compactionStates.get(sessionId);
+        if (!state) return null;
+        if (state.status === "running" && (active?.invocationId !== state.invocationId || active.status === "waiting")) return null;
+        return structuredClone(state);
+    }
+
+    private publishCompactionProgress(sessionId: number, invocationId: string, progress: CompactionProgress): void {
+        if (!this.ownsInvocation(sessionId, invocationId)) return;
+        const previous = this.compactionStates.get(sessionId);
+        const state = {...progress, invocationId, startedAt: previous?.invocationId === invocationId && previous.status === "running"
+            ? previous.startedAt : progress.startedAt};
+        this.compactionStates.set(sessionId, state);
+        this.publishRuntimeEvent(sessionId, invocationId, {type: "compaction_update", state: structuredClone(state)});
+    }
+
+    /** 只在维护边界替换旧读取，避免每次追加对话都改写已缓存的历史前缀。 */
+    private async compactModelContext(input: Parameters<typeof compactIfNeeded>[0] & {instructions?: string}, invocationId?: string, force = false): Promise<boolean> {
+        if (!input.compaction || !invocationId) return compactIfNeeded(input);
+        const options = resolveCompactionOptions(input.compaction, input.model);
+        const measure = () => Math.max(estimateFinalRequestTokens(input),
+            input.messages.reduce((tokens, message) => tokens + estimateRequestMessageTokens(message), 0)
+                + (input.requestOverheadTokens ?? estimateRequestOverheadTokens(input)));
+        const tokensBefore = measure();
+        if (!force && !shouldCompactWithOptions(tokensBefore, input.model.contextWindow, options)) return false;
+        const sessionId = input.snapshot.metadata.sessionId;
+        const startedAt = Date.now();
+        const progress: CompactionProgress = {status: "running", stage: "pruning", startedAt, updatedAt: startedAt,
+            completedBatches: 0, tokensBefore};
+        // 首轮摘要发生在 agent_start 前；先广播活动 invocation，使客户端能验证事件归属。
+        await this.publishSessionState(sessionId, invocationId);
+        this.publishCompactionProgress(sessionId, invocationId, progress);
+        try {
+            input.signal?.throwIfAborted();
+            const drafts = planToolContextPruning(this.repo.activePath(input.snapshot), input.minRecentMessages);
+            if (drafts.length) {
+                const rawPath = this.repo.activePath(input.snapshot);
+                await this.executeWritePlan({target: {sessionId}, cause: "compact.prune",
+                    ops: [{kind: "appendMany", entries: drafts}]}, invocationId);
+                input.snapshot = await this.repo.readSession(sessionId);
+                const projected = new Map(this.repo.modelVisiblePath(input.snapshot).map(entry => [entry.id, entry]));
+                const resultKey = (message: import("nbook/server/agent/messages/stored-message-presentation").StoredMessageLike) =>
+                    createHash("sha256").update(JSON.stringify(message)).digest("hex");
+                const results = new Map<string, StoredToolResultMessage>();
+                for (const source of rawPath) {
+                    const replacement = projected.get(source.id);
+                    if (source.type === "message" && source.message.role === "toolResult"
+                        && replacement?.type === "message" && replacement.message.role === "toolResult"
+                        && replacement.message !== source.message) results.set(resultKey(source.message), replacement.message);
+                }
+                const updated = input.messages.map(message => message.role === "toolResult"
+                    ? results.get(resultKey(message)) ?? message
+                    : message.role === "assistant" ? {...message, usage: EMPTY_USAGE} : message);
+                input.messages.splice(0, input.messages.length, ...updated);
+            }
+            const request = {...input, onProgress: async (state: CompactionProgress) => {
+                this.publishCompactionProgress(sessionId, invocationId, {...state, tokensBefore});
+                await input.onProgress?.(state);
+            }};
+            let compacted: boolean;
+            if (force) {
+                await appendCompaction(request);
+                compacted = true;
+            } else {
+                compacted = await compactIfNeeded(request);
+            }
+            if (!compacted) this.publishCompactionProgress(sessionId, invocationId, {...progress,
+                status: "completed", updatedAt: Date.now(), tokensAfter: measure()});
+            return compacted;
+        } catch (error) {
+            const current = this.compactionStates.get(sessionId);
+            if (current?.status === "running") this.publishCompactionProgress(sessionId, invocationId, {...progress,
+                status: input.signal?.aborted ? "cancelled" : "failed", updatedAt: Date.now(),
+                error: textPreview(providerErrorText(error), 2048).preview});
+            throw error;
+        }
     }
 
     /**
      * 自动 compact 会把早期 HistorySet 压进 summary；下一轮前补写一次初始化历史。
      */
     private async reinjectHistorySetAfterCompaction(frame: RunFrame): Promise<void> {
+        if (frame.managedPromptMessages) return;
         if (!frame.sessionContextEnabled || !frame.profile.prepare) {
             return;
         }
@@ -5245,13 +5562,15 @@ export class NeuroAgentHarness {
         }, frame.invocationId);
     }
 
-    /** Compaction 被有效配置关闭时主动阻止超窗口请求，避免静默依赖 provider overflow。 */
-    private assertContextWithinWindow(frame: Pick<RunFrame, "messages" | "model" | "profileKey">): void {
-        const usage = estimateStoredContextTokens(frame.messages);
-        if (usage.tokens <= frame.model.contextWindow) {
+    /** 最新输入或完整工具组不能裁掉；压缩后仍超窗口时也必须阻止 Provider 请求。 */
+    private assertContextWithinWindow(frame: Pick<RunFrame, "messages" | "model" | "profileKey" | "compaction"> & {systemPrompt?: string; tools?: import("nbook/server/agent/messages/types").Tool[]}): void {
+        const tokens = estimateFinalRequestTokens(frame);
+        const reserve = Math.min(frame.compaction?.reserveTokens ?? frame.model.maxTokens, frame.model.maxTokens);
+        if (tokens + reserve <= frame.model.contextWindow) {
             return;
         }
-        throw new Error(`当前 profile ${frame.profileKey} 的有效配置已关闭 Compaction，上下文 ${usage.tokens} tokens 已超过模型 ${frame.model.id} 的 ${frame.model.contextWindow} token 限制。`);
+        const reason = frame.compaction?.enabled ? "保留的当前输入或完整工具上下文仍过大，请缩小本次输入或附加资料" : "有效配置已关闭 Compaction";
+        throw new Error(`当前 profile ${frame.profileKey} 的${reason}，上下文 ${tokens} tokens 加输出预留已超过模型 ${frame.model.id} 的 ${frame.model.contextWindow} token 限制。`);
     }
 
     /** 从 effective config 摘 Pi trace 设置三元组（prepareRun / 无 frame 场景共用）。 */
@@ -5335,7 +5654,30 @@ export class NeuroAgentHarness {
             timeoutMs: input.snapshot.timeoutMs ?? undefined,
             signal: input.abortSignal,
         };
-        const stream = tracedStreamSimple(input.snapshot.models, input.snapshot.model, context, options, input.trace, {
+        const ordered = prepareOrderedProviderRequest(input.snapshot.model, context, options, input.snapshot.orderedPromptMessages, input.snapshot.managedPromptMessageCount ?? 0);
+        const compiled = input.snapshot.sessionSnapshot.metadata.profileKey === "writing.writer" ? await this.compiledWriterPromptForSession(input.sessionId) : null;
+        const generation = compiled?.generation;
+        const effectiveGeneration = generation ? {...generation, temperature: options.temperature ?? generation.temperature} : undefined;
+        if (compiled?.budgetReport && compiled.budgetReport.contextTokens > input.snapshot.model.contextWindow) {
+            throw new Error("酒馆上下文预算超过当前模型窗口，请调整预算或模型配置");
+        }
+        if (effectiveGeneration?.maxTokens !== undefined && (effectiveGeneration.maxTokens > input.snapshot.model.maxTokens || effectiveGeneration.maxTokens >= input.snapshot.model.contextWindow)) {
+            throw new Error(`酒馆预设输出额度 ${effectiveGeneration.maxTokens} 超过当前模型配置，请调整预设覆盖或模型额度`);
+        }
+        if (effectiveGeneration) {
+            const budget = compiled?.budgetReport && compiled.tavern ? await prepareTavernBudget(compiled.tavern) : undefined;
+            // Conversion can add names/placeholders after history selection; count that final prefix with the same tokenizer.
+            const prefixTokens = budget ? 3 + (input.snapshot.orderedPromptMessages ?? []).reduce((total, message) => total + budget.count(message), 0)
+                : estimateTextTokens(JSON.stringify(input.snapshot.orderedPromptMessages ?? []));
+            const inputTokens = prefixTokens + estimateStoredContextTokens(ordered.context.messages).tokens;
+            if (inputTokens + (effectiveGeneration.maxTokens ?? 0) > input.snapshot.model.contextWindow) throw new Error("酒馆请求输入与输出额度超过模型窗口，请调整上下文预算或输出额度");
+            await this.executeWritePlan({target: {sessionId: input.sessionId}, cause: "agent.session.writer_request_parameters", ops: [{kind: "append", entry: {
+                type: "custom", origin: "projection", key: "prompt.management.writer.request", value: normalizeToolResultDetails({model: input.snapshot.model.id,
+                    api: input.snapshot.model.api, generation: {...effectiveGeneration, reasoningEffort: resolveTavernCustomReasoningEffort(effectiveGeneration.reasoningEffort, input.snapshot.model.id)}}),
+            }}]});
+        }
+        const effectiveOptions = effectiveGeneration ? applyTavernGeneration(input.snapshot.model, ordered.options, effectiveGeneration) : ordered.options;
+        const stream = tracedStreamSimple(input.snapshot.models, input.snapshot.model, ordered.context, effectiveOptions, input.trace, {
             context: traceContext,
             segments: traceSegments,
             attribution: input.snapshot.promptPrefix?.mode,
@@ -7313,6 +7655,12 @@ export class NeuroAgentHarness {
         }
     }
 
+    /** Profile 配置的 temperature 覆盖 Provider 默认，低于本次调用的显式覆盖；未配置时不写，交给 Provider 默认。 */
+    private profileRequestOptions(config: Pick<EffectiveConfig, "agent">, profileKey: string): Record<string, JsonValue> {
+        const temperature = configuredProfileModel(config, profileKey)?.temperature ?? config.agent.profileModelDefaults.temperature ?? null;
+        return temperature === null ? {} : {temperature};
+    }
+
     private providerOptions(config: Pick<EffectiveConfig, "models">, model: Model<any>): {timeoutMs: number | null; requestOptions: Record<string, JsonValue>} {
         const modelIdentity = model as unknown as {providerConfigId?: unknown};
         const providerConfigId = typeof modelIdentity.providerConfigId === "string"
@@ -7337,7 +7685,7 @@ export class NeuroAgentHarness {
         model: Model<any>,
     ): ThinkingLevel {
         const requested = context.thinkingLevel
-            ?? config.agent.profiles[context.profileKey]?.model.reasoningEffort
+            ?? configuredProfileModel(config, context.profileKey)?.reasoningEffort
             ?? config.agent.profileModelDefaults.reasoningEffort
             ?? "off";
         return clampThinkingLevel(model, requested);
@@ -7750,7 +8098,9 @@ export class NeuroAgentHarness {
      * 生成当前 active context 的 token 估算信息。
      */
     private async sessionContextUsage(snapshot: SessionSnapshot, context: NeuroSessionContext): Promise<AgentSessionContextUsageDto> {
-        const usedTokens = estimateStoredContextTokens(context.messages).tokens;
+        const usedTokens = Math.max(estimateFinalRequestTokens({messages: context.messages}),
+            context.messages.reduce((total, message) => total + estimateRequestMessageTokens(message), 0)
+                + (this.requestOverheads.get(snapshot.metadata.sessionId) ?? 0));
         let limitTokens: number | null = null;
         try {
             const config = await loadEffectiveConfig(resolveNonInvocationConfigTarget(snapshot.metadata, this.workspaceRoot));
@@ -7904,12 +8254,16 @@ export class NeuroAgentHarness {
             const thinkingLevel = this.resolveThinkingLevel(context, config, model);
             const profile = await this.profiles.get(context.profileKey);
             const compaction = this.resolveProfileRuntimeSettings(profile, config).compaction;
-            await appendCompaction({
+            const systemPrompt = await this.snapshotSystemPrompt(snapshot, context, profile);
+            const tools = this.tools.allowedWithOverrides(profile.rootToolKeys, await this.toolOverrides(profile.rootToolKeys, context.profileKey, this.profiles.parseInitial(profile, snapshot.metadata.initial)));
+            await this.publishSessionState(sessionId, invocationId);
+            await this.compactModelContext({
                 repo: this.repo,
                 snapshot,
                 messages: context.messages,
                 models,
                 model,
+                systemPrompt, tools,
                 apiKey: resolvePiApiKeyForModelFromConfig(config, model),
                 timeoutMs: providerOptions.timeoutMs,
                 requestOptions: providerOptions.requestOptions,
@@ -7925,7 +8279,7 @@ export class NeuroAgentHarness {
                         invocationId,
                     }).append("compact.append", entry);
                 },
-            });
+            }, invocationId, true);
             await this.commitInvocationState({
                 sessionId,
                 invocationId,

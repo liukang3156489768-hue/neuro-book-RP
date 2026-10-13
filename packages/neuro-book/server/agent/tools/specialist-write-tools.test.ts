@@ -76,15 +76,15 @@ describe("write_lorebook / edit_lorebook", () => {
         await expect(fs.stat(path.join(ready.workspace.root, "lorebook/item/key.md"))).rejects.toThrow();
     });
 
-    it("委派期间可写入和编辑 lorebook Markdown，但不能写规划规范文件、正文或其他扩展名", async () => {
+    it("委派期间旧素材工具也拒绝新建对象和基础编辑，不能绕过同步规划入口", async () => {
         await withPlanningWriteGrant(601, async () => {
-            await writeLorebook!.executeWithContext!(ctx(), "w1", {path: "lorebook/item/key.md", content: "银色钥匙"});
-            await editLorebook!.executeWithContext!(ctx(), "e1", {path: "lorebook/item/key.md", edits: [{oldText: "银色", newText: "铜色"}]});
+            await expect(writeLorebook!.executeWithContext!(ctx(), "w1", {path: "lorebook/item/key.md", content: "银色钥匙"})).rejects.toThrow("materialUpdates");
+            await expect(editLorebook!.executeWithContext!(ctx(), "e1", {path: "lorebook/item/key.md", edits: [{oldText: "银色", newText: "铜色"}]})).rejects.toThrow("materialUpdates");
             for (const target of ["outline/manifest.yaml", "manuscript/001/index.md", "lorebook/item/key.yaml", "../escape.md"]) {
                 await expect(writeLorebook!.executeWithContext!(ctx(), "w2", {path: target, content: "x"})).rejects.toThrow();
             }
         });
-        await expect(fs.readFile(path.join(ready.workspace.root, "lorebook/item/key.md"), "utf8")).resolves.toBe("铜色钥匙");
+        await expect(fs.stat(path.join(ready.workspace.root, "lorebook/item/key.md"))).rejects.toThrow();
         await expect(fs.readFile(path.join(ready.workspace.root, "outline/manifest.yaml"), "utf8")).resolves.toBe("original");
         await expect(fs.stat(path.join(ready.workspace.root, "manuscript"))).rejects.toThrow();
     });

@@ -330,6 +330,8 @@ export const useNovelIdeStore = defineStore("novelIde", () => {
         promise: Promise<ProjectCatalogSnapshot>;
     } | null = null;
     const workspaceTreeRevision = ref(0);
+    /** 最近一批磁盘变化；其他视图据此刷新自己的派生数据，不再各开一条文件事件流。 */
+    const workspaceDiskEvents = ref<Readonly<{sequence: number; events: readonly WorkspaceFileChangeEventDto[]}>>({sequence: 0, events: []});
 
     const reasoningOptions = [...REASONING_OPTIONS];
 
@@ -1591,6 +1593,7 @@ export const useNovelIdeStore = defineStore("novelIde", () => {
     const syncWorkspaceFromDisk = async (events: WorkspaceFileChangeEventDto[]): Promise<WorkspaceDiskSyncResult> => {
         const unchanged: WorkspaceDiskSyncResult = {activeFile: "unchanged", dirtyPaths: [], deletedPaths: []};
         if (!canAccessWorkspace.value || events.length === 0) return unchanged;
+        workspaceDiskEvents.value = {sequence: workspaceDiskEvents.value.sequence + 1, events};
         flushEditorPending();
         const generation = workspaceGeneration.value;
         const key = workspaceSessionKey.value;
@@ -2155,6 +2158,7 @@ export const useNovelIdeStore = defineStore("novelIde", () => {
         workspaceWriteConflict,
         workspaceIssues,
         workspaceTreeRevision,
+        workspaceDiskEvents,
         workspaceBuffers,
         workspaceSessions,
         workspaceTabs,

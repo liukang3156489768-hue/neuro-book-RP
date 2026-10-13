@@ -18,8 +18,8 @@ import {
  * - **容器**由页面按生效落位求值后传入（`containers` / `activeContainerId`），选择只回传 `open-container`，
  *   「重复点击当前项」的语义（保持选择并显式打开被隐藏 / 拖收起的主侧栏）归页面；
  * - **非容器命令**来自 `createWorkbenchActivityItems` 的能力表，禁用与原因按原有 Project / user-assets 门禁；
- * - `files` / `characters` 这类工具视图与 `agent-panel` 不再是活动项：它们分别归主侧栏容器里的视图
- *   与 Agent 面板自己的入口，这里不画第二个开关。
+ * - `files` 这类工具视图与 `agent-panel` 不再是活动项：它们分别归主侧栏容器里的视图与 Agent
+ *   面板自己的入口；角色管理是覆盖主工作区的独立工作台，因此作为固定主入口保留。
  */
 
 /** 一个可选的容器项：标题与图标已由页面解析（组件不读 descriptor、不做 i18n）。 */
@@ -46,6 +46,7 @@ const props = defineProps<{
     userAssetsMode: boolean;
     currentUser: AuthUserDto | null;
     inspirationOpen?: boolean;
+    charactersOpen?: boolean;
     outlineOpen?: boolean;
     /** 容器条目是否可作为拖动源 / 落点（主侧栏的容器切换就在这条活动栏上）。 */
     allowContainerMove?: boolean;
@@ -60,6 +61,7 @@ const emit = defineEmits<{
     (event: "open-container", containerId: string): void;
     (event: "open-world-engine"): void;
     (event: "open-inspiration"): void;
+    (event: "open-characters"): void;
     (event: "open-outline-workbench"): void;
     (event: "open-trace-viewer"): void;
     (event: "open-history-inbox"): void;
@@ -118,8 +120,29 @@ const containerItems = computed<ActivityItem[]>(() => props.containers.map((cont
     id: container.containerId,
     label: container.title,
     icon: container.icon,
-    active: container.containerId === props.activeContainerId,
+    // 角色页覆盖主工作区；保留当前容器作为返回目标，但活动栏只允许一个入口显示为选中。
+    active: !props.charactersOpen && container.containerId === props.activeContainerId,
 })));
+
+const characterItem = computed<ActivityItem>(() => ({
+    id: "characters",
+    label: "角色",
+    icon: "i-lucide-users",
+    active: props.charactersOpen === true,
+    disabled: !props.surfaceActive || props.userAssetsMode,
+    reason: props.userAssetsMode ? t("ide.activityBar.needOpenProject") : undefined,
+}));
+
+/**
+ * 固定主入口：角色工作台必须始终可见，不能因活动栏高度被收进 More。
+ * 默认顺序把它放在文件容器与大纲容器之间；若用户重排或删除了大纲容器，则退到主入口组末尾。
+ */
+const primaryItems = computed<ActivityItem[]>(() => {
+    const items = [...containerItems.value];
+    const outlineIndex = items.findIndex((item) => item.id === "nbook.outline");
+    items.splice(outlineIndex < 0 ? items.length : outlineIndex, 0, characterItem.value);
+    return items;
+});
 
 const toolItems = computed<ActivityItem[]>(() => [
     ...activityItems.value.tools.map(toActivityItem),
@@ -138,6 +161,7 @@ function invoke(id: string): void {
         case "plot": emit("open-plot-workbench"); return;
         case "world": emit("open-world-engine"); return;
         case "inspiration": emit("open-inspiration"); return;
+        case "characters": emit("open-characters"); return;
         case "outline": emit("open-outline-workbench"); return;
         case "trace": emit("open-trace-viewer"); return;
         case "history": emit("open-history-inbox"); return;
@@ -153,7 +177,7 @@ function invoke(id: string): void {
         :allow-container-move="props.allowContainerMove === true"
         :allow-view-move="props.allowViewMove === true"
         :context-key="props.contextKey ?? ''"
-        :primary="containerItems"
+        :primary="primaryItems"
         :secondary="toolItems"
         :footer="footerItems"
         label="Workbench navigation"

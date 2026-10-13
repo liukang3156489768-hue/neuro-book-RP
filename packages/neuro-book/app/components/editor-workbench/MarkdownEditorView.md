@@ -15,9 +15,11 @@ type Props = {
     resolveMenu?: (context: AgentTriggerMenuContext) => AgentTriggerMenuState;
     openReference?: (target: string) => void; resolveReference?: WorkspaceReferenceResolver;
     inlineAiReferences?: InlineEditReference[]; inlineAiHighlightReference?: InlineEditReference | null; enableQuickTriggers?: boolean;
+    /** 为 true 时右键菜单有“改写选中内容”，选区文本经 rewrite-selection 交给宿主 */
+    canRewriteSelection?: boolean;
 };
 // emits: save(target), focus(target,focused), ready(handle|null), actions(target,actions),
-// open-frontmatter-profile(kind), inline-ai-reference(reference)
+// open-frontmatter-profile(kind), inline-ai-reference(reference), rewrite-selection(target,text)
 ```
 
 无slots、无expose，attrs透传根元素。ready句柄支持flush/focus/undo/redo、`markdown.comments`动作与冲突裁决 `resolveConflict`。动作checked反馈批注面板展开状态。未编辑切换视图不会序列化正文；实际富文本编辑采用现有Markdown方言序列化语义，不承诺源码空白逐字保持。

@@ -110,6 +110,8 @@ describe("outline workbench storage definition", () => {
     });
 
     it("accepts partial preferences and rejects invalid boundaries", () => {
+        expect(isOutlineWorkbenchRecord({mode: "auto", creationMode: "adaptation"})).toBe(true);
+        expect(isOutlineWorkbenchRecord({creationMode: "unknown"})).toBe(false);
         expect(isOutlineWorkbenchRecord({agentWidth: 220, activeView: "lines", temperature: 2})).toBe(true);
         expect(isOutlineWorkbenchRecord({agentWidth: 219})).toBe(false);
         expect(isOutlineWorkbenchRecord({temperature: 2.1})).toBe(false);

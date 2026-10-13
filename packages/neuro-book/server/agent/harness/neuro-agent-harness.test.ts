@@ -18,6 +18,7 @@ import {Value} from "typebox/value";
 import type {AgentMessage, Usage} from "nbook/server/agent/messages/types";
 import type {Message as RuntimeMessage} from "nbook/server/agent/messages/types";
 import {NeuroAgentHarness} from "nbook/server/agent/harness/neuro-agent-harness";
+import {COMPACTION_PROMPT} from "nbook/server/agent/harness/compaction";
 import type {AgentInvocationResult} from "nbook/server/agent/harness/types";
 import type {ResolvedPiModel} from "nbook/server/agent/harness/pi-model-metadata";
 import {JsonlSessionRepository} from "nbook/server/agent/session/session-repo";
@@ -1515,7 +1516,7 @@ describe("NeuroAgentHarness", () => {
         });
         await harness.repo.appendMessage(created.sessionId, createUserMessage({text: "ask all"}));
         await harness.repo.appendMessage(created.sessionId, fauxAssistantMessage(toolCallIds.map((toolCallId, index) => fauxToolCall("request_user_input", {
-            questions: [{question: `${String(index)}-${"问题".repeat(6_000)}`}],
+            questions: [{question: `${String(index)}-${"问题".repeat(3_500)}`}],
         }, {id: toolCallId})), {stopReason: "toolUse"}));
         await harness.repo.appendEntry(created.sessionId, {
             type: "invocation_lifecycle",
@@ -1541,7 +1542,7 @@ describe("NeuroAgentHarness", () => {
                 answers: [{questionIndex: 0, text: "继续"}],
             })),
         });
-        expect(continued.status).toBe("completed");
+        expect(continued.status, continued.error).toBe("completed");
         expect(continued.reportResult?.result).toBe("all resolved");
     });
 
@@ -2864,6 +2865,106 @@ describe("NeuroAgentHarness", () => {
         }
     });
 
+    it("已有868k缓存会话首轮发送前压缩，保留规划合同、临时上下文和当前输入顺序", async () => {
+        faux = createFauxModels({models: [{id: `faux-large-${randomUUID()}`, contextWindow: 1_000_000, maxTokens: 8_000}]});
+        await writeFile(join(root, ".nbook", "config.json"), JSON.stringify({models: fauxProviderConfig(faux).models}));
+        const calls: string[] = [];
+        const prompts: string[] = [];
+        faux.setResponses(Array.from({length: 16}, () => context => {
+            const text = context.messages.map(message => messageText(message as RuntimeMessage)).join("\n");
+            if (messageText(context.messages.at(-1)! as RuntimeMessage).includes(COMPACTION_PROMPT)) {
+                calls.push("summary");
+                expect(context.systemPrompt).toBe("PLANNING");
+                expect(context.tools ?? []).toEqual([]);
+                expect(messageText(context.messages.at(-1)! as RuntimeMessage)).toContain("Return only the handoff summary");
+                expect(messageText(context.messages[0]! as RuntimeMessage)).toMatch(/^OLD_READ history/);
+                return fauxAssistantMessage(fauxText("SUMMARY_KEEP: plan-123；既有约束与待办保持"));
+            }
+            calls.push("turn");
+            prompts.push(text);
+            return fauxAssistantMessage(fauxText("规划继续"));
+        }));
+        harness.profiles.register(defineAgentProfile({
+            manifest: {key: "test.resumed-planning", name: "Resumed planning"}, initialSchema: Type.Object({}), allowedToolKeys: [],
+            prepare() {return {systemPrompt: "PLANNING", historyInitMessages: [createUserMessage({text: "PLANNING_CONTRACT"})],
+                modelContextMessages: [createUserMessage({text: "MODEL_CONTEXT"})], appendingMessages: [createUserMessage({text: "APPENDING"})]};},
+        }), false);
+        const created = await harness.createAgent({profileKey: "test.resumed-planning", initial: {}});
+        await harness.repo.appendMessage(created.sessionId, createUserMessage({text: "OLD_READ " + "history ".repeat(120_000)}));
+        await harness.repo.appendMessage(created.sessionId, createAssistantTextMessage({text: "最新决定 plan-123", usage: usage(469, 1_536, 865_024)}));
+        const result = await harness.invokeAgent({sessionId: created.sessionId, mode: "prompt", message: {text: "CURRENT_TASK"}});
+        expect(result.status, result.error).toBe("completed");
+        expect(calls[0]).toBe("summary");
+        expect(prompts).toHaveLength(1);
+        expect(prompts[0]).not.toContain("OLD_READ");
+        expect(prompts[0]).toContain("SUMMARY_KEEP");
+        expect(prompts[0]).toContain("最新决定 plan-123");
+        expect(prompts[0]).toContain("PLANNING_CONTRACT");
+        expect(prompts[0]!.indexOf("MODEL_CONTEXT")).toBeLessThan(prompts[0]!.indexOf("APPENDING"));
+        expect(prompts[0]).toMatch(/CURRENT_TASK$/);
+        const after = await harness.repo.readSession(created.sessionId);
+        expect(after.entries.filter(entry => entry.type === "compaction")).toHaveLength(1);
+        // 同 session 的摘要复用可能使 faux 主请求产生额外缓存读取，原历史费用必须完整保留。
+        expect(harness.repo.summary(after).usage?.cacheRead).toBeGreaterThanOrEqual(865_024);
+        const next = await harness.invokeAgent({sessionId: created.sessionId, mode: "prompt", message: {text: "NEXT_TASK"}});
+        expect(next.status, next.error).toBe("completed");
+        expect(calls.filter(kind => kind === "turn")).toHaveLength(2);
+        expect((await harness.repo.readSession(created.sessionId)).entries.filter(entry => entry.type === "compaction")).toHaveLength(1);
+    });
+
+    it("首轮压缩保留整个 AppendingSet，即使近期预算只容纳当前输入", async () => {
+        const prompts: string[] = [];
+        faux.setResponses([
+            fauxAssistantMessage(fauxText("EARLY_SUMMARY")),
+            context => {
+                prompts.push(context.messages.map(message => messageText(message as RuntimeMessage)).join("\n"));
+                return fauxAssistantMessage(fauxText("done"));
+            },
+        ]);
+        harness.profiles.register(defineAgentProfile({
+            manifest: {key: "test.protected-prepare-tail", name: "Protected prepare tail"},
+            initialSchema: Type.Object({}), allowedToolKeys: [],
+            runtimeDefaults: {compaction: {trigger: {kind: "tokens", value: 1_000}, keepRecent: {kind: "tokens", value: 1}}},
+            prepare() {
+                return {
+                    historyInitMessages: [createUserMessage({text: "CONTRACT"})],
+                    modelContextMessages: [createUserMessage({text: "LIVE_CONTEXT"})],
+                    appendingMessages: [createUserMessage({text: "APPEND_FIRST"}), createUserMessage({text: "APPEND_SECOND"})],
+                };
+            },
+        }), false);
+        const created = await harness.createAgent({profileKey: "test.protected-prepare-tail", initial: {}});
+        await harness.repo.appendMessage(created.sessionId, createUserMessage({text: "old ".repeat(2_000)}));
+        const result = await harness.invokeAgent({sessionId: created.sessionId, mode: "prompt", message: {text: "CURRENT_INPUT"}});
+        expect(result.status, result.error).toBe("completed");
+        expect(prompts).toHaveLength(1);
+        expect(prompts[0]).toMatch(/EARLY_SUMMARY\nCONTRACT\nLIVE_CONTEXT\nAPPEND_FIRST\nAPPEND_SECOND\nCURRENT_INPUT$/);
+        const active = harness.repo.reduce(await harness.repo.readSession(created.sessionId));
+        expect(messageText(active.messages[0]!)).toContain("EARLY_SUMMARY");
+    });
+
+    it("首轮自动压缩失败保留原会话，拒绝发送原来的巨大上下文", async () => {
+        const calls: string[] = [];
+        faux.setResponses([context => {
+            const instruction = messageText(context.messages.at(-1)! as RuntimeMessage);
+            expect(instruction).toContain(COMPACTION_PROMPT);
+            expect(context.systemPrompt ?? "").not.toContain(COMPACTION_PROMPT);
+            expect(context.tools ?? []).toEqual([]);
+            calls.push(instruction);
+            return fauxAssistantMessage(fauxText(""));
+        }]);
+        harness.profiles.register(defineAgentProfile({manifest: {key: "test.failed-preflight-compact", name: "Failed preflight compact"},
+            initialSchema: Type.Object({}), allowedToolKeys: [], prepare() {return {};}}), false);
+        const created = await harness.createAgent({profileKey: "test.failed-preflight-compact", initial: {}});
+        await harness.repo.appendMessage(created.sessionId, createUserMessage({text: "旧内容".repeat(160_000)}));
+        const result = await harness.invokeAgent({sessionId: created.sessionId, mode: "prompt", message: {text: "继续"}});
+        expect(result.status).toBe("error");
+        expect(result.errorInfo?.phase).toBe("compaction");
+        expect(result.acceptance?.state).toBe("persisted");
+        expect(calls).toEqual([expect.stringContaining(COMPACTION_PROMPT)]);
+        expect((await harness.repo.readSession(created.sessionId)).entries.some(entry => entry.type === "compaction")).toBe(false);
+    });
+
     it("自动 compaction 在下一轮 turn 前执行，并影响下一轮 provider context", async () => {
         const providerPrompts: string[] = [];
         harness.tools.register({
@@ -2874,7 +2975,7 @@ describe("NeuroAgentHarness", () => {
             parameters: Type.Object({}),
             async execute() {
                 return {
-                    content: [{type: "text", text: "continue"}],
+                    content: [{type: "text", text: "continue ".repeat(1_000)}],
                     details: {},
                     terminate: false,
                 };
@@ -2889,7 +2990,7 @@ describe("NeuroAgentHarness", () => {
             allowedToolKeys: ["force_continue"],
             runtimeDefaults: {
                 compaction: {
-                    trigger: {kind: "tokens", value: 1},
+                    trigger: {kind: "tokens", value: 1_000},
                     keepRecent: {kind: "tokens", value: 1},
                 },
             },
@@ -2932,7 +3033,70 @@ describe("NeuroAgentHarness", () => {
         expect(providerPrompts[1]).toContain("COMPACT SUMMARY");
         expect(providerPrompts[1]).toContain("HISTORY AFTER AUTO COMPACT");
         expect(providerPrompts[1]).not.toContain("OLD CONTEXT");
-        expect(context.messages[0] && messageText(context.messages[0] as never)).toContain("OLD CONTEXT");
+        expect(context.messages[0] && messageText(context.messages[0] as never)).toContain("COMPACT SUMMARY");
+    });
+
+    it("首轮压缩进度先广播活动invocation，SSE与recovery可见且停止取消摘要", async () => {
+        harness.profiles.register(defineAgentProfile({
+            manifest: {key: "test.compaction-progress", name: "Compaction progress"},
+            initialSchema: Type.Object({}), allowedToolKeys: [],
+            runtimeDefaults: {compaction: {trigger: {kind: "tokens", value: 1_000}, keepRecent: {kind: "tokens", value: 1}}},
+            prepare() {return {systemPrompt: "PLANNING_PROGRESS"};},
+        }), false);
+        let providerStarted: () => void = () => undefined;
+        const started = new Promise<void>(resolve => {providerStarted = resolve;});
+        let receivedSignal: AbortSignal | undefined;
+        faux.setResponses([async (context, options) => {
+            expect(context.systemPrompt).toBe("PLANNING_PROGRESS");
+            expect(messageText(context.messages.at(-1)! as RuntimeMessage)).toContain(COMPACTION_PROMPT);
+            receivedSignal = options?.signal;
+            providerStarted();
+            if (!receivedSignal) throw new Error("摘要未收到取消信号");
+            await new Promise<void>(resolve => {
+                if (receivedSignal!.aborted) resolve();
+                else receivedSignal!.addEventListener("abort", () => resolve(), {once: true});
+            });
+            return fauxAssistantMessage([], {stopReason: "aborted", errorMessage: "cancelled"});
+        }]);
+        const created = await harness.createAgent({profileKey: "test.compaction-progress", initial: {}});
+        await harness.repo.appendMessage(created.sessionId, createUserMessage({text: "较早规划资料".repeat(2_000)}));
+        const subscription = harness.subscribeSessionEvents(created.sessionId);
+        const running = harness.invokeAgent({sessionId: created.sessionId, mode: "prompt", message: {text: "继续规划"}});
+        try {
+            await started;
+            const events: AgentSessionEventDto[] = [];
+            for (let attempt = 0; attempt < 40; attempt += 1) {
+                const event = await nextEventWithin(subscription, "first compaction progress");
+                events.push(event);
+                if (event.kind === "runtime" && event.event.type === "compaction_update" && event.event.state.stage === "summarizing") break;
+            }
+            const activeIndex = events.findIndex(event => event.kind === "session" && event.event.type === "session_state_changed" && event.event.state.activeInvocation !== null);
+            const compactIndex = events.findIndex(event => event.kind === "runtime" && event.event.type === "compaction_update");
+            expect(activeIndex).toBeGreaterThanOrEqual(0);
+            expect(compactIndex).toBeGreaterThan(activeIndex);
+            expect(events.some(event => event.kind === "runtime" && event.event.type === "agent_start")).toBe(false);
+            const recovery = await harness.getSessionRecovery(created.sessionId);
+            expect(recovery.compaction).toMatchObject({status: "running", stage: "summarizing", completedBatches: 0, totalBatches: 1});
+            expect(recovery.compaction?.invocationId).toBe(recovery.activeInvocation?.invocationId);
+            expect((await harness.getSessionLiveState(created.sessionId)).compaction).toEqual(recovery.compaction);
+            await harness.abortInvocation(created.sessionId, {reason: "停止压缩测试"});
+            const result = await running;
+            expect(result.status).not.toBe("completed");
+            expect(receivedSignal?.aborted).toBe(true);
+            let cancelled = false;
+            for (let attempt = 0; attempt < 40; attempt += 1) {
+                const event = await nextEventWithin(subscription, "compaction cancellation");
+                if (event.kind === "runtime" && event.event.type === "compaction_update" && event.event.state.status === "cancelled") {cancelled = true; break;}
+            }
+            expect(cancelled).toBe(true);
+            expect((await harness.getSessionRecovery(created.sessionId)).compaction?.status).toBe("cancelled");
+            expect((await harness.repo.readSession(created.sessionId)).entries.some(entry => entry.type === "compaction")).toBe(false);
+            expect(faux.state.callCount).toBe(1);
+        } finally {
+            subscription.close();
+            if (!receivedSignal?.aborted) await harness.abortInvocation(created.sessionId, {reason: "cleanup"});
+            await running;
+        }
     });
 
     it("自定义 runtime 有 profile compaction 配置时仍会自动 compaction", async () => {
@@ -2945,7 +3109,7 @@ describe("NeuroAgentHarness", () => {
             parameters: Type.Object({}),
             async execute() {
                 return {
-                    content: [{type: "text", text: "continue"}],
+                    content: [{type: "text", text: "continue ".repeat(1_000)}],
                     details: {},
                     terminate: false,
                 };
@@ -2960,7 +3124,7 @@ describe("NeuroAgentHarness", () => {
             allowedToolKeys: ["force_continue_no_compact"],
             runtimeDefaults: {
                 compaction: {
-                    trigger: {kind: "tokens", value: 1},
+                    trigger: {kind: "tokens", value: 1_000},
                     keepRecent: {kind: "tokens", value: 1},
                 },
             },
@@ -3061,6 +3225,101 @@ describe("NeuroAgentHarness", () => {
         expect(result.errorInfo?.message).toContain("已关闭 Compaction");
         expect(result.errorInfo?.message).toContain("超过模型");
     }, 30_000);
+
+    it("压缩后当前输入仍超模型窗口时拒绝主请求并保留完整输入", async () => {
+        harness = createTestHarness({
+            repo: harness.repo,
+            modelResolver: () => ({...faux.getModel(), contextWindow: 10_000}),
+            runtimeResolver: () => faux.runtime,
+            enableSessionSummarizer: false,
+        });
+        const calls: string[] = [];
+        faux.setResponses([context => {
+            const instruction = messageText(context.messages.at(-1)! as RuntimeMessage);
+            expect(instruction).toContain(COMPACTION_PROMPT);
+            expect(context.systemPrompt ?? "").not.toContain(COMPACTION_PROMPT);
+            expect(context.tools ?? []).toEqual([]);
+            expect(messageText(context.messages[0]! as RuntimeMessage)).toBe("旧历史");
+            calls.push(instruction);
+            return fauxAssistantMessage(fauxText("旧历史摘要"));
+        }]);
+        harness.profiles.register(defineAgentProfile({
+            manifest: {key: "test.compacted-input-overflow", name: "Compacted input overflow"},
+            initialSchema: Type.Object({}), allowedToolKeys: [],
+            runtimeDefaults: {compaction: {reserveTokens: 2_000, keepRecent: {kind: "tokens", value: 1_000}}},
+            prepare() {return {};},
+        }), false);
+        const created = await harness.createAgent({profileKey: "test.compacted-input-overflow", initial: {}});
+        await harness.repo.appendMessage(created.sessionId, createUserMessage({text: "旧历史"}));
+        const text = "当前资料 ".repeat(12_000);
+        const result = await harness.invokeAgent({sessionId: created.sessionId, mode: "prompt", message: {text}});
+        expect(result.status).toBe("error");
+        expect(result.error).toContain("超过模型");
+        expect(result.error).toContain("缩小本次输入");
+        expect(result.acceptance?.state).toBe("persisted");
+        expect(calls).toEqual([expect.stringContaining(COMPACTION_PROMPT)]);
+        const snapshot = await harness.repo.readSession(created.sessionId);
+        expect(harness.repo.reduce(snapshot).messages.map(message => messageText(message as RuntimeMessage))).toContain(text);
+    });
+
+    it("压缩边界先去重工具资料且保留复用调用ID的不同正文，低于触发线跳过摘要", async () => {
+        harness.profiles.register(defineAgentProfile({
+            manifest: {key: "test.prune-only", name: "Prune only"}, initialSchema: Type.Object({}), allowedToolKeys: [],
+            runtimeDefaults: {compaction: {trigger: {kind: "tokens", value: 10_000}}},
+            prepare() {return {};},
+        }), false);
+        const created = await harness.createAgent({profileKey: "test.prune-only", initial: {}});
+        const shared = {revision: 1, entries: [{id: "target", title: "可复用索引".repeat(700)}]};
+        for (const [index, item] of [shared, {body: "第一章原文", contentHash: "cas-first"},
+            {body: "第二章原文", contentHash: "cas-second"}, shared].entries()) {
+            const planning = index === 0 || index === 3;
+            const id = planning ? "planning-" + index : "reused-call";
+            const name = planning ? "get_planning_context" : "read_chapter";
+            await harness.repo.appendMessage(created.sessionId, fauxAssistantMessage([fauxToolCall(name, {}, {id})], {stopReason: "toolUse"}));
+            await harness.repo.appendMessage(created.sessionId, createTextToolResult({toolCallId: id, toolName: name, text: JSON.stringify(item)}));
+        }
+        faux.setResponses([context => {
+            const prompt = context.messages.map(message => messageText(message as RuntimeMessage)).join("\n");
+            expect(prompt).toContain("_contextReference");
+            expect(prompt).toContain("第一章原文");
+            expect(prompt).toContain("cas-first");
+            expect(prompt).toContain("第二章原文");
+            expect(prompt).toContain("cas-second");
+            expect(messageText(context.messages.at(-1)! as RuntimeMessage)).not.toContain(COMPACTION_PROMPT);
+            return fauxAssistantMessage("继续");
+        }]);
+        const result = await harness.invokeAgent({sessionId: created.sessionId, mode: "prompt", message: {text: "继续"}});
+        expect(result.status, result.error).toBe("completed");
+        const snapshot = await harness.repo.readSession(created.sessionId);
+        expect(snapshot.entries.some(entry => entry.type === "custom" && entry.key.startsWith("context.toolResult:"))).toBe(true);
+        expect(snapshot.entries.some(entry => entry.type === "compaction")).toBe(false);
+        expect(faux.state.callCount).toBe(1);
+        expect((await harness.getSessionRecovery(created.sessionId)).compaction).toMatchObject({status: "completed", stage: "pruning"});
+    });
+
+    it("下一轮动态资料计入触发线，摘要后仍完整发送当前资料", async () => {
+        harness.tools.register({key: "context_continue", name: "context_continue", label: "Continue", description: "Continue",
+            parameters: Type.Object({}), async execute() {return {content: [{type: "text", text: "continue"}], details: {}, terminate: false};}});
+        const dynamic = "RUNTIME资料".repeat(1_000);
+        harness.profiles.register(defineAgentProfile({
+            manifest: {key: "test.dynamic-compaction", name: "Dynamic context"}, initialSchema: Type.Object({}), allowedToolKeys: ["context_continue"],
+            runtimeDefaults: {compaction: {trigger: {kind: "tokens", value: 5_000}, keepRecent: {kind: "tokens", value: 1}}},
+            runtime: defineAgentRuntime<object>({hooks: [agentRuntimeBuiltins.sessionRuntime(), {
+                name: "dynamic", stage: "prepareNextTurn", run() {return {runtimeMessages: [createUserMessage({text: dynamic})]};},
+            }]}), prepare() {return {};},
+        }), false);
+        const created = await harness.createAgent({profileKey: "test.dynamic-compaction", initial: {}});
+        await harness.repo.appendMessage(created.sessionId, createUserMessage({text: "旧任务".repeat(700)}));
+        const stages: string[] = [];
+        faux.setResponses([
+            () => {stages.push("turn"); return fauxAssistantMessage([fauxToolCall("context_continue", {}, {id: "context-continue"})], {stopReason: "toolUse"});},
+            context => {stages.push("summary"); expect(messageText(context.messages.at(-1)! as RuntimeMessage)).toContain(COMPACTION_PROMPT); return fauxAssistantMessage("用户关键决定保持。");},
+            context => {stages.push("turn"); expect(context.messages.map(message => messageText(message as RuntimeMessage))).toContain(dynamic); return fauxAssistantMessage("完成");},
+        ]);
+        const result = await harness.invokeAgent({sessionId: created.sessionId, mode: "prompt", message: {text: "继续"}});
+        expect(result.status, result.error).toBe("completed");
+        expect(stages).toEqual(["turn", "summary", "turn"]);
+    });
 
     it("profile reasoningEffort 会传给支持 reasoning 的模型", async () => {
         await mkdir(join(root, ".nbook"), {recursive: true});
@@ -7063,7 +7322,7 @@ describe("NeuroAgentHarness", () => {
             parameters: Type.Object({}),
             async execute() {
                 return {
-                    content: [{type: "text", text: "continue"}],
+                    content: [{type: "text", text: "continue ".repeat(1_000)}],
                     details: {},
                     terminate: false,
                 };
@@ -7078,7 +7337,7 @@ describe("NeuroAgentHarness", () => {
             allowedToolKeys: ["force_continue_without_session_context"],
             runtimeDefaults: {
                 compaction: {
-                    trigger: {kind: "tokens", value: 1},
+                    trigger: {kind: "tokens", value: 1_000},
                     keepRecent: {kind: "tokens", value: 1},
                 },
             },
@@ -8725,7 +8984,10 @@ describe("NeuroAgentHarness", () => {
             }
         }
         abortSubscription.close();
-        faux.setResponses([fauxAssistantMessage("after abort")]);
+        // 巨型停止原因仍保留在审计工具结果中；下一轮可以先压缩，再继续普通回复。
+        faux.setResponses(Array.from({length: 8}, () => context => fauxAssistantMessage(
+            messageText(context.messages.at(-1)! as RuntimeMessage).includes(COMPACTION_PROMPT) ? "已停止等待，继续当前任务。" : "after abort",
+        )));
         const next = await harness.invokeAgent({
             sessionId: created.sessionId,
             mode: "prompt",
@@ -8739,7 +9001,7 @@ describe("NeuroAgentHarness", () => {
         expect(publicAbortReason).toBeDefined();
         expect(publicAbortReason).not.toBe(abortReason);
         expect(Buffer.byteLength(publicAbortReason ?? "", "utf8")).toBeLessThanOrEqual(2 * 1024);
-        expect(next.status).toBe("completed");
+        expect(next.status, next.error).toBe("completed");
         expect(recovery.activeInvocation).toBeNull();
         expect(snapshot.entries).toContainEqual(expect.objectContaining({
             type: "invocation_lifecycle",

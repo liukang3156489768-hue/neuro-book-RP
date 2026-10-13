@@ -30,6 +30,8 @@ import {
     SHELL_LEFT_CONTAINER,
     SHELL_PANEL_CONTAINER,
     SHELL_RIGHT_CONTAINER,
+    WRITING_OUTLINE_CONTAINER,
+    WRITING_SESSION_CONTAINER,
 } from "nbook/app/utils/workbench/containers";
 import {
     containerOrientation,
@@ -100,11 +102,49 @@ export const SHELL_FILES_VIEW: ViewDescriptor = {
     stateScope: "user",
 };
 
+/**
+ * 写作大纲与写作会话：写作模块的两个入口（spec writing.workspace-ui）。
+ *
+ * 两者都只在 Project 打开时出现，动作可用性与文件树同看 `files` authority——写作设置、关联正文
+ * 与主创会话都作用在当前 Project 的工作区文件上。领域数据只有写作 store 一份，两个视图都从它读写。
+ */
+export const WRITING_OUTLINE_VIEW: ViewDescriptor = {
+    id: "nbook.writing-outline",
+    titleKey: "ide.toolPanel.writingOutline",
+    icon: "i-lucide-list-tree",
+    container: WRITING_OUTLINE_CONTAINER.id,
+    layout: "fill",
+    when: {requires: ["project"]},
+    requiredAuthority: ["files"],
+    order: 10,
+    weight: 1,
+    canToggleVisibility: false,
+    canMoveView: true,
+    factoryKey: "nbook.view.writing-outline",
+    stateScope: "user",
+};
+
+export const WRITING_SESSION_VIEW: ViewDescriptor = {
+    id: "nbook.writing-session",
+    titleKey: "ide.toolPanel.writingSession",
+    icon: "i-lucide-feather",
+    container: WRITING_SESSION_CONTAINER.id,
+    layout: "fill",
+    when: {requires: ["project"]},
+    requiredAuthority: ["files"],
+    order: 10,
+    weight: 1,
+    canToggleVisibility: false,
+    canMoveView: true,
+    factoryKey: "nbook.view.writing-session",
+    stateScope: "user",
+};
+
 const PRODUCT_CATALOG: WorkbenchCatalog = {
     /** 叶仍是外壳的固定骨架（`WorkbenchShell.vue`）：没有消费者前不声明 Part descriptor。 */
     parts: [],
-    containers: [SHELL_LEFT_CONTAINER, SHELL_PANEL_CONTAINER, SHELL_RIGHT_CONTAINER],
-    views: [SHELL_FILES_VIEW],
+    containers: [SHELL_LEFT_CONTAINER, WRITING_OUTLINE_CONTAINER, SHELL_PANEL_CONTAINER, SHELL_RIGHT_CONTAINER, WRITING_SESSION_CONTAINER],
+    views: [SHELL_FILES_VIEW, WRITING_OUTLINE_VIEW, WRITING_SESSION_VIEW],
 };
 
 let productRegistry: DescriptorResult<WorkbenchRegistry> | null = null;

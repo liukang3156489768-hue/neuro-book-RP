@@ -5,6 +5,31 @@ import type {AgentChatEntryDto} from "nbook/shared/dto/agent-public-event.dto";
 import {assertPublicToolCallId} from "nbook/shared/agent/public-tool-identity";
 
 describe("useAgentSession event reducer", () => {
+    it("restores running compaction, accepts live progress, and clears unfinished state on run end", () => {
+        const session = useAgentSession();
+        const activeInvocation = {invocationId: "run-1", sessionId: 1, status: "running" as const, mode: "prompt" as const, startedAt: 1};
+        const compaction = {invocationId: "run-1", status: "running" as const, stage: "summarizing" as const, startedAt: 1, updatedAt: 2, completedBatches: 0, totalBatches: 3, tokensBefore: 300000};
+        session.applyRecovery({...recovery(0), activeInvocation, compaction});
+        expect(session.compaction.value).toEqual(compaction);
+        session.applyEvent(runtime(1, {type: "compaction_update", state: {...compaction, updatedAt: 3, completedBatches: 1}}));
+        expect(session.compaction.value?.completedBatches).toBe(1);
+        session.applyEvent(runtime(2, {type: "agent_end", status: "completed"}));
+        expect(session.compaction.value).toBeNull();
+    });
+
+    it("ignores old invocation progress and clears state on session reset", () => {
+        const session = useAgentSession();
+        const compaction = {invocationId: "run-1", status: "running" as const, stage: "pruning" as const, startedAt: 1, updatedAt: 2, completedBatches: 0, tokensBefore: 300000};
+        session.applyRecovery({...recovery(0), activeInvocation: {invocationId: "run-2", sessionId: 1, status: "running", mode: "prompt", startedAt: 3}, compaction});
+        expect(session.compaction.value).toBeNull();
+        session.applyEvent(runtime(1, {type: "agent_start"}));
+        session.applyEvent(runtime(2, {type: "compaction_update", state: compaction}));
+        expect(session.compaction.value).toBeNull();
+        session.applyLiveState({...liveState(), compaction: {...compaction, status: "completed", tokensAfter: 50000}});
+        expect(session.compaction.value?.status).toBe("completed");
+        session.reset();
+        expect(session.compaction.value).toBeNull();
+    });
     beforeEach(() => {
         vi.useFakeTimers();
     });

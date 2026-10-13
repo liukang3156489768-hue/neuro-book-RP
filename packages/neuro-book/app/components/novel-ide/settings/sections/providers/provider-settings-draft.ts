@@ -84,7 +84,31 @@ export type ModelSettingsDraft = ContractSettingsDraft<ModelSettingsProviderDraf
     agentVisibleModels: AgentVisibleModelDraft[];
 };
 
+/**
+ * 对齐一个 Provider 下整组同源模型的 API 声明。
+ *
+ * Provider 的 modelApi 是候选创建时的默认协议；历史配置可能在修改默认协议后
+ * 仍保留旧的模型 api。只有所有模型当前声明同一个协议（包括全部为空）时才能
+ * 确认它们属于同一批旧配置，混合协议 Provider 交给用户逐条维护。
+ */
+export function alignProviderModelApis(provider: ModelSettingsProviderDraft): ModelSettingsProviderDraft {
+    const providerApi = provider.modelApi.trim();
+    if (!providerApi || provider.models.length === 0) {
+        return provider;
+    }
+    const modelApis = provider.models.map((model) => model.api.trim());
+    const firstApi = modelApis[0];
+    if (firstApi === undefined || !modelApis.every((api) => api === firstApi) || firstApi === providerApi) {
+        return provider;
+    }
+    return {
+        ...provider,
+        models: provider.models.map((model) => ({...model, api: providerApi})),
+    };
+}
+
 type AgentModelConfig = {
+    summarizerModelKey?: string | null;
     profileModelDefaults?: {modelKey?: string | null};
     profiles?: Record<string, {model?: {modelKey?: string | null}}>;
     visibleModels?: AgentVisibleModelDraft[];
@@ -241,6 +265,7 @@ export function cleanGlobalAgent<T extends AgentModelConfig>(agent: T | undefine
     }
     return {
         ...agent,
+        summarizerModelKey: cleanModelKey(agent.summarizerModelKey, modelKeys),
         profileModelDefaults: agent.profileModelDefaults
             ? {...agent.profileModelDefaults, modelKey: cleanModelKey(agent.profileModelDefaults.modelKey, modelKeys)}
             : agent.profileModelDefaults,
@@ -298,6 +323,7 @@ export function renameAgentProvider<T extends AgentModelConfig>(
     return {
         agent: {
             ...agent,
+            summarizerModelKey: rename(agent.summarizerModelKey),
             profileModelDefaults: agent.profileModelDefaults
                 ? {...agent.profileModelDefaults, modelKey: rename(agent.profileModelDefaults.modelKey)}
                 : agent.profileModelDefaults,

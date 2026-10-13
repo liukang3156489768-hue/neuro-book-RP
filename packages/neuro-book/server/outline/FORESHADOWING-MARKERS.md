@@ -147,7 +147,7 @@
 
 ```typescript
 {
-  action: "strengthen",  // strengthen=reinforce, resolve=recover
+  action: "strengthen",  // plant=plant, strengthen=reinforce, resolve=recover
   expectedRevision: 5,
   planId: "plan-xxx",
   entryId: "ol-chapter-3",
@@ -160,7 +160,7 @@
 ```
 
 **重要**：
-- `action` 参数使用 `strengthen`（对应 `reinforce`）和 `resolve`（对应 `recover`）
+- `action` 参数使用 `plant`（对应 `plant`，章节还没有任何标记时也用它）、`strengthen`（对应 `reinforce`）和 `resolve`（对应 `recover`）
 - `body` 参数必须包含完整的带标记的正文
 - 标记语法必须正确，否则会校验失败
 

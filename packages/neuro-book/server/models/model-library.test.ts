@@ -20,4 +20,18 @@ describe("Model Library", () => {
         expect(modelKnowledge("mimo-v2.5 ")).not.toBeNull();
         expect(modelKnowledge("mimo")).toBeNull();
     });
+
+    it.each([
+        ["claude-opus-5", "anthropic", 1_000_000, 128_000],
+        ["claude-opus-5-5", "anthropic", 1_000_000, 128_000],
+        ["gpt-6.1-sol", "openai", 1_050_000, 128_000],
+        ["gpt-6-astra", "openai", 1_050_000, 128_000],
+        ["gemini-3.7-flash", "google", 1_048_576, 65_536],
+        ["gemini-3.8-flash", "google", 1_048_576, 65_536],
+    ])("为 %s 提供可用于导入的完整通用能力", (id, source, contextWindowTokens, maxTokens) => {
+        expect(modelKnowledge(id)).toMatchObject({
+            id, source, contextWindowTokens, maxTokens,
+            reasoning: true, input: ["text", "image"],
+        });
+    });
 });

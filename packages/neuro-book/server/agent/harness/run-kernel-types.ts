@@ -19,6 +19,7 @@ import type {Models} from "@earendil-works/pi-ai";
 import type {PublicRuntimeProjectionState} from "nbook/server/agent/events/public-event-projection";
 import type {AbsoluteFsPath} from "nbook/server/runtime/paths/file-path";
 import type {ReadyProjectSessionRef} from "nbook/server/workspace-files/project-session-types";
+import type {PromptMessage} from "nbook/shared/dto/prompt-management.dto";
 
 export type RunRuntimeState = Map<string, JsonValue>;
 
@@ -154,6 +155,9 @@ export type RunFrame = {
     workspaceRoot: AbsoluteFsPath;
     currentProject: ReadyProjectSessionRef | null;
     systemPrompt: string;
+    /** Immutable pre-input is restored ahead of the compacted transcript, independently of Profile HistorySet. */
+    managedPromptMessages?: StoredAgentMessage[];
+    orderedPromptMessages?: PromptMessage[];
     models: Models;
     model: Model<any>;
     apiKey?: string;
@@ -216,6 +220,8 @@ export type TurnSnapshot = {
     sessionSnapshot: SessionSnapshot;
     sessionContext: NeuroSessionContext;
     systemPrompt: string;
+    orderedPromptMessages?: PromptMessage[];
+    managedPromptMessageCount?: number;
     /** Provider 请求前的冻结 stored truth；禁止提前投影 marker 或 hydrate base64。 */
     modelMessages: StoredAgentMessage[];
     /** 与 modelMessages 前缀对应的分区归因（Task 126）；缺省表示本次调用无 profile prepare 归因。 */

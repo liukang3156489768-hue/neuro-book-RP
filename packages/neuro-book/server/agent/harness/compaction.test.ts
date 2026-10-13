@@ -3,14 +3,17 @@ import {randomUUID} from "node:crypto";
 import {rm} from "node:fs/promises";
 import {join, resolve} from "node:path";
 import {afterEach, beforeEach, describe, expect, it} from "vitest";
+import {Type} from "typebox";
 import {fauxAssistantMessage, fauxText, fauxToolCall} from "@earendil-works/pi-ai";
 import type {Context} from "@earendil-works/pi-ai";
 import {createFauxModels, type FauxModelsFixture} from "nbook/server/agent/test-utils/faux-models";
-import {appendCompaction, COMPACTION_PROMPT, COMPACTION_SUMMARY_PREFIX, compactIfNeeded, resolveCompactionOptions, shouldCompactWithOptions} from "nbook/server/agent/harness/compaction";
+import {appendCompaction, COMPACTION_PROMPT, COMPACTION_SUMMARY_PREFIX, compactIfNeeded, resolveCompactionOptions, shouldCompactWithOptions, type CompactionProgress} from "nbook/server/agent/harness/compaction";
 import {createAssistantTextMessage, createTextToolResult, createUserMessage, messageText} from "nbook/server/agent/messages/message-utils";
 import {JsonlSessionRepository} from "nbook/server/agent/session/session-repo";
 import type {StoredAgentMessage, StoredAttachmentContent} from "nbook/server/agent/messages/stored-types";
 import {attachmentMarker} from "nbook/server/agent/messages/stored-message-presentation";
+import {estimateStoredMessageTokens} from "nbook/server/agent/messages/stored-message-tokens";
+import {estimateFinalRequestTokens} from "nbook/server/agent/messages/request-tokens";
 import {absoluteFsPath, type AbsoluteFsPath} from "nbook/server/runtime/paths/file-path";
 
 describe("compaction", () => {
@@ -109,6 +112,7 @@ describe("compaction", () => {
         const snapshot = await repo.readSession(session.metadata.sessionId);
         const controller = new AbortController();
         let writeCalled = false;
+        const progress: CompactionProgress[] = [];
 
         const compacting = appendCompaction({
             repo,
@@ -117,6 +121,7 @@ describe("compaction", () => {
             models: faux.runtime,
             model: faux.getModel(),
             signal: controller.signal,
+            onProgress: async event => {progress.push(event);},
             writeCompactionEntry: async () => {
                 writeCalled = true;
             },
@@ -131,6 +136,52 @@ describe("compaction", () => {
         await expect(compacting).rejects.toThrow("project closing");
         expect(receivedSignal).toBe(controller.signal);
         expect(writeCalled).toBe(false);
+        expect(progress.at(-1)?.status).toBe("cancelled");
+        expect(progress.filter(event => event.status !== "running")).toHaveLength(1);
+    });
+
+    it("摘要复用原system/tools和完整工具消息前缀，将摘要指令置尾并单独记录用量", async () => {
+        let captured: Context | undefined;
+        faux.setResponses([(context) => {
+            captured = context;
+            return fauxAssistantMessage(fauxText("保留用户决定"));
+        }]);
+        const session = await repo.createSession({profileKey: "outline.planner", initial: {}});
+        await repo.appendEntry(session.metadata.sessionId, {type: "custom_message", visibleToModel: true,
+            message: createUserMessage({text: "稳定规划资料"})});
+        await repo.appendMessage(session.metadata.sessionId, createUserMessage({text: "用户决定：保留主角动机"}));
+        const call = createAssistantTextMessage({text: ""});
+        call.content = [fauxToolCall("get_planning_context", {entryIds: ["entry-1"]}, {id: "read-1"})];
+        await repo.appendMessage(session.metadata.sessionId, call);
+        await repo.appendMessage(session.metadata.sessionId, createTextToolResult({toolCallId: "read-1", toolName: "get_planning_context", text: "条目详情"}));
+        await repo.appendMessage(session.metadata.sessionId, createUserMessage({text: "当前任务"}));
+        const snapshot = await repo.readSession(session.metadata.sessionId);
+        const tools = [{name: "get_planning_context", description: "读取资料", parameters: Type.Object({})}];
+        await appendCompaction({repo, snapshot, messages: repo.reduce(snapshot).messages, models: faux.runtime,
+            model: faux.getModel(), systemPrompt: "原系统提示", tools,
+            compaction: {keepRecent: {kind: "tokens", value: 1}},
+            writeCompactionEntry: createCompactionEntryWriter(repo, session.metadata.sessionId)});
+        expect(captured?.systemPrompt).toBe("原系统提示");
+        expect(captured?.tools).toEqual(tools);
+        expect(captured?.messages.slice(0, -1)).toEqual(snapshot.entries.filter(entry => entry.type === "message" || entry.type === "custom_message").slice(0, -1).map(entry => entry.message));
+        expect(messageText(captured!.messages.at(-1)!)).toContain(COMPACTION_PROMPT);
+        const receipt = (await repo.readSession(session.metadata.sessionId)).entries.find(entry => entry.type === "compaction");
+        expect(receipt?.type === "compaction" ? receipt.details?.usage?.input : undefined).toBeGreaterThan(0);
+        expect(receipt?.type === "compaction" ? receipt.details?.totalBatches : undefined).toBe(1);
+    });
+
+    it("摘要被输出上限截断时不保存压缩收据", async () => {
+        faux.setResponses([fauxAssistantMessage(fauxText("不完整摘要"), {stopReason: "length"})]);
+        const session = await repo.createSession({profileKey: "outline.planner", initial: {}});
+        await repo.appendMessage(session.metadata.sessionId, createUserMessage({text: "较早规划"}));
+        await repo.appendMessage(session.metadata.sessionId, createUserMessage({text: "当前任务"}));
+        const snapshot = await repo.readSession(session.metadata.sessionId);
+        await expect(appendCompaction({
+            repo, snapshot, messages: repo.reduce(snapshot).messages, models: faux.runtime, model: faux.getModel(),
+            compaction: {keepRecent: {kind: "tokens", value: 1}},
+            writeCompactionEntry: createCompactionEntryWriter(repo, session.metadata.sessionId),
+        })).rejects.toThrow("不完整");
+        expect((await repo.readSession(session.metadata.sessionId)).entries.some(entry => entry.type === "compaction")).toBe(false);
     });
 
     it("cut point 不会从 toolResult 半截开始", async () => {
@@ -233,6 +284,84 @@ describe("compaction", () => {
         expect(shouldCompactWithOptions(102_399, 128_000, options)).toBe(false);
     });
 
+    it("默认500k触发包含缓存上下文，并提前保护小模型窗口，显式配置优先", () => {
+        const largeModel = {...faux.getModel(), contextWindow: 1_000_000};
+        const defaults = resolveCompactionOptions({}, largeModel);
+        expect(shouldCompactWithOptions(499_999, largeModel.contextWindow, defaults)).toBe(false);
+        expect(shouldCompactWithOptions(500_000, largeModel.contextWindow, defaults)).toBe(true);
+        expect(resolveCompactionOptions({trigger: {kind: "tokens", value: 300_000}}, largeModel).triggerTokens).toBe(300_000);
+        expect(shouldCompactWithOptions(867_029, largeModel.contextWindow, defaults)).toBe(true);
+        expect(defaults.keepRecentTokens).toBe(24_000);
+        const small = resolveCompactionOptions({}, faux.getModel());
+        expect(small.triggerTokens).toBe(102_400);
+        expect(shouldCompactWithOptions(102_400, 128_000, small)).toBe(true);
+        expect(resolveCompactionOptions({trigger: {kind: "autoReserve"}}, largeModel).triggerTokens).toBeUndefined();
+    });
+
+    it("长中文历史分批摘要，每批合并已有摘要且完成后仅落一份收据", async () => {
+        const inputs: Context[] = [];
+        const progress: CompactionProgress[] = [];
+        faux.setResponses(Array.from({length: 8}, (_, index) => (context: Context) => {
+            const text = summaryPromptText(context);
+            expect(estimateFinalRequestTokens(context)).toBeLessThanOrEqual(102_400);
+            if (index > 0) expect(text).toContain(`摘要${index}`);
+            inputs.push(context);
+            return fauxAssistantMessage(fauxText(`摘要${index + 1}`));
+        }));
+        const session = await repo.createSession({profileKey: "outline.planner", initial: {}});
+        const history = "较早规划📝".repeat(50_000);
+        await repo.appendMessage(session.metadata.sessionId, createUserMessage({text: history}));
+        await repo.appendMessage(session.metadata.sessionId, createUserMessage({text: "当前任务"}));
+        const snapshot = await repo.readSession(session.metadata.sessionId);
+        await appendCompaction({repo, snapshot, messages: repo.reduce(snapshot).messages, models: faux.runtime, model: faux.getModel(),
+            compaction: {keepRecent: {kind: "tokens", value: 1}},
+            onProgress: async event => {progress.push(event);},
+            writeCompactionEntry: createCompactionEntryWriter(repo, session.metadata.sessionId)});
+        const after = await repo.readSession(session.metadata.sessionId);
+        expect(inputs.length).toBeGreaterThan(1);
+        const chunks = inputs.map(context => messageText(context.messages.at(-2)!).replace(/^\[Oversized conversation group[^\n]*\]\n/, ""));
+        expect(JSON.parse(chunks.join(""))[0].content).toEqual([{type: "text", text: history}]);
+        for (const chunk of chunks) expect(chunk).toBe(Buffer.from(chunk).toString("utf8"));
+        expect(after.entries.filter(entry => entry.type === "compaction")).toHaveLength(1);
+        expect(progress.at(-1)?.status).toBe("completed");
+        expect(progress.at(-1)?.completedBatches).toBe(inputs.length);
+        expect(progress.at(-1)?.totalBatches).toBe(inputs.length);
+        expect(messageText(repo.reduce(after).messages.at(-1)!)).toBe("当前任务");
+    });
+
+    it("后续摘要分批失败时不保存半份压缩结果", async () => {
+        faux.setResponses([fauxAssistantMessage(fauxText("第一批摘要")), fauxAssistantMessage(fauxText(""))]);
+        const session = await repo.createSession({profileKey: "outline.planner", initial: {}});
+        await repo.appendMessage(session.metadata.sessionId, createUserMessage({text: "规划".repeat(80_000)}));
+        await repo.appendMessage(session.metadata.sessionId, createUserMessage({text: "当前任务"}));
+        const snapshot = await repo.readSession(session.metadata.sessionId);
+        const progress: CompactionProgress[] = [];
+        await expect(appendCompaction({repo, snapshot, messages: repo.reduce(snapshot).messages, models: faux.runtime, model: faux.getModel(),
+            compaction: {keepRecent: {kind: "tokens", value: 1}},
+            onProgress: async event => {progress.push(event);},
+            writeCompactionEntry: createCompactionEntryWriter(repo, session.metadata.sessionId)})).rejects.toThrow("summary 为空");
+        expect((await repo.readSession(session.metadata.sessionId)).entries.some(entry => entry.type === "compaction")).toBe(false);
+        expect(progress.at(-1)?.status).toBe("failed");
+        expect(progress.at(-1)?.completedBatches).toBe(1);
+        expect(progress.at(-1)?.usage?.input).toBeGreaterThan(0);
+        expect(progress.filter(event => event.status !== "running")).toHaveLength(1);
+    });
+
+    it("大窗口可容纳中文历史时只摘要一批，不再按200k UTF8字节上限拆分", async () => {
+        let captured: Context | undefined;
+        faux.setResponses([(context) => {captured = context; return fauxAssistantMessage(fauxText("摘要"));}]);
+        const session = await repo.createSession({profileKey: "outline.planner", initial: {}});
+        const history = "中文规划资料".repeat(25_000);
+        await repo.appendMessage(session.metadata.sessionId, createUserMessage({text: history}));
+        await repo.appendMessage(session.metadata.sessionId, createUserMessage({text: "当前任务"}));
+        const snapshot = await repo.readSession(session.metadata.sessionId);
+        await appendCompaction({repo, snapshot, messages: repo.reduce(snapshot).messages, models: faux.runtime,
+            model: {...faux.getModel(), contextWindow: 1_000_000}, compaction: {keepRecent: {kind: "tokens", value: 1}},
+            writeCompactionEntry: createCompactionEntryWriter(repo, session.metadata.sessionId)});
+        expect(faux.state.callCount).toBe(1);
+        expect(messageText(captured!.messages[0]!)).toBe(history);
+    });
+
     it("triggerTokens 生效并把自定义 prompt/prefix 写入 summary 调用和 compaction entry", async () => {
         let summaryPrompt: Context | null = null;
         let summaryHeaders: Record<string, string | null> | undefined;
@@ -283,7 +412,7 @@ describe("compaction", () => {
         const reduced = repo.reduce(await repo.readSession(session.metadata.sessionId));
         expect(compacted).toBe(true);
         const capturedPrompt = summaryPrompt as Context | null;
-        expect(capturedPrompt?.systemPrompt).toBe("CUSTOM PROMPT");
+        expect(messageText(capturedPrompt!.messages.at(-1)!)).toContain("CUSTOM PROMPT");
         expect(summaryMaxRetries).toBe(5);
         expect(summaryHeaders).toEqual({
             "x-request": "request",
@@ -293,7 +422,7 @@ describe("compaction", () => {
         expect(messageText(reduced.messages[0] as never)).toContain("CUSTOM PREFIX");
     });
 
-    it("visible custom_message 参与 recent cut 预算但不进入 summary 输入", async () => {
+    it("visible custom_message 按原顺序参与摘要回放和 recent cut 预算", async () => {
         let secondSummaryPrompt: Context | null = null;
         faux.setResponses([
             () => {
@@ -345,7 +474,10 @@ describe("compaction", () => {
             model: faux.getModel(),
             compaction: {
                 trigger: {kind: "tokens", value: 1},
-                keepRecent: {kind: "tokens", value: 200},
+                keepRecent: {kind: "tokens", value:
+                    estimateStoredMessageTokens(createUserMessage({text: "NEW HISTORYSET SHOULD STAY " + "new ".repeat(200)}))
+                    + estimateStoredMessageTokens(createUserMessage({text: "new user dialogue"})),
+                },
             },
             writeCompactionEntry,
         });
@@ -364,7 +496,7 @@ describe("compaction", () => {
             .toBe(latestCompaction?.type === "compaction" ? latestCompaction.tokensBefore : undefined);
     });
 
-    it("persisted sidecar message 作为普通 message 进入 summary 输入", async () => {
+    it("persisted sidecar 和模型可见 custom message 按原顺序进入 summary 输入", async () => {
         let summaryPrompt: Context | null = null;
         faux.setResponses([
             (context) => {
@@ -389,6 +521,7 @@ describe("compaction", () => {
             message: createUserMessage({text: "RUNTIME ONLY SHADOW SHOULD NOT EXIST IN SUMMARY"}),
             visibleToModel: true,
         });
+        await repo.appendMessage(session.metadata.sessionId, createUserMessage({text: "recent"}));
         const snapshot = await repo.readSession(session.metadata.sessionId);
 
         await appendCompaction({
@@ -405,7 +538,7 @@ describe("compaction", () => {
         });
 
         expect(summaryPromptText(summaryPrompt)).toContain("PERSISTED SIDECAR CONTEXT");
-        expect(summaryPromptText(summaryPrompt)).not.toContain("RUNTIME ONLY SHADOW SHOULD NOT EXIST IN SUMMARY");
+        expect(summaryPromptText(summaryPrompt)).toContain("RUNTIME ONLY SHADOW SHOULD NOT EXIST IN SUMMARY");
     });
 
     it("attachment 使用 marker 参与 compaction 与固定 token 预算，不读取 blob", async () => {
