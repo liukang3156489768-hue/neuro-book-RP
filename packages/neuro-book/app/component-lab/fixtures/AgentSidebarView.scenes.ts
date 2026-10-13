@@ -2,6 +2,7 @@ import type AgentSidebarView from "../../components/novel-ide/agent/AgentSidebar
 import type {AgentSidebarViewProps} from "../../components/novel-ide/agent/AgentSidebarView.types";
 import type {LabFixtureDefinition} from "./index";
 import {SIDEBAR_FIXTURE_SCENARIOS, type AgentSidebarFixtureSceneData} from "./agent-sidebar-fixture-data";
+import {sampleSessionTree} from "./AgentExtraPanels.scenes";
 
 type SidebarInputProps = Omit<AgentSidebarViewProps, "composer" | "flow" | "workspaceChanges" | "referenceTeleportTarget" | "workflowByToolKey" | "resolveAttachmentUrl" | "systemPrompt"> & {
     composer: Omit<AgentSidebarViewProps["composer"], "resolveMenu" | "onSkillTriggerStart">;
@@ -87,7 +88,7 @@ function sidebarProps(s: AgentSidebarFixtureSceneData): SidebarInputProps {
         workspaceChanges: {
             projectRoot: "workspace/projects/novel", groups: s.workspaceGroups ?? [], loading: false,
             error: null, expanded: (s.workspaceGroups?.length ?? 0) > 0,
-            selectedPath: null, busyPath: null, acceptingAll: false,
+            selectedPath: s.workspaceGroups?.[0]?.path ?? null, busyPath: null, acceptingAll: false,
         },
         workflowPending: {runs: s.workflowPendingRuns ?? []},
         sessions: {
@@ -97,7 +98,7 @@ function sidebarProps(s: AgentSidebarFixtureSceneData): SidebarInputProps {
             createProfileOptions: [{profileKey: "writer.default", label: "通用写作助手", iconClass: "i-lucide-feather"}],
             canChooseCreateProfile: true,
         },
-        sessionTree: {tree: s.sessionTree ?? [], activeLeafId: null, running, canActivate: true},
+        sessionTree: {tree: s.sessionTree ?? sampleSessionTree, activeLeafId: "entry-user-0006b", running, canActivate: true},
         contextInspector: {sessionId: s.activeSessionId, inspection: s.contextInspection ?? null, loading: false, error: "", selectedTraceId: "req-1"},
     };
 }

@@ -90,7 +90,7 @@ export function deriveDisplayMode(name: string, kind?: LabComponentKind): LabDis
         return "tight";
     }
 
-    if (/SettingsView$/u.test(name) || /Panel$/u.test(name)) {
+    if (/SettingsView$/u.test(name) || /Panel$/u.test(name) || /(Dialog|Window)$/u.test(name) || kind === "dialog") {
         return "fill";
     }
 

@@ -811,9 +811,47 @@ function setSlotPreset(name: string, on: boolean): void {
 
 const hasFixtureControls = ref(false);
 const bottomPanelCollapsed = ref(false);
+const controlsTargetRef = ref<HTMLElement | null>(null);
+const controlsTargetMinHeight = ref<string | undefined>(undefined);
+let activeControlsCount = 0;
+let isStageLeaving = false;
+
+function syncFixtureControlsVisibility(): void {
+    if (!isStageLeaving) {
+        hasFixtureControls.value = activeControlsCount > 0;
+        controlsTargetMinHeight.value = undefined;
+    }
+}
+
+function handleStageBeforeLeave(): void {
+    isStageLeaving = true;
+}
+
+function handleStageEnter(): void {
+    isStageLeaving = false;
+    void nextTick(syncFixtureControlsVisibility);
+}
+
+function handleStageAfterLeave(): void {
+    void nextTick(() => {
+        if (isStageLeaving && !fixtureComponent.value) {
+            isStageLeaving = false;
+            syncFixtureControlsVisibility();
+        }
+    });
+}
 
 provide(LAB_CONTROLS_REGISTER, (active: boolean) => {
-    hasFixtureControls.value = active;
+    if (active) {
+        activeControlsCount += 1;
+        hasFixtureControls.value = true;
+    } else {
+        if (controlsTargetRef.value && controlsTargetRef.value.offsetHeight > 0) {
+            controlsTargetMinHeight.value = `${controlsTargetRef.value.offsetHeight}px`;
+        }
+        activeControlsCount = Math.max(0, activeControlsCount - 1);
+        void nextTick(syncFixtureControlsVisibility);
+    }
 });
 
 // ——— 命令宿主 ———
@@ -1148,13 +1186,18 @@ watch(fixture, async (next) => {
     }
 }, {immediate: true});
 
-watch([selectedScene, fixture], ([id, currentFixture]) => {
+watch([selectedScene, fixture], ([id, currentFixture], prev) => {
     if (currentFixture && !currentFixture.scenes.some((item) => item.id === id)) {
         selectedScene.value = currentFixture.scenes[0]?.id ?? "";
         return;
     }
     resetScene();
-    hasFixtureControls.value = false;
+    if (!currentFixture || (prev && prev[1] && prev[1].component !== currentFixture.component)) {
+        activeControlsCount = 0;
+        isStageLeaving = false;
+        controlsTargetMinHeight.value = undefined;
+        hasFixtureControls.value = false;
+    }
 }, {immediate: true});
 
 // 挂上新 fixture 或换场景后是另一批 DOM 节点，之前选中的那个已经不在了
@@ -1438,8 +1481,14 @@ watch([sceneInput, canvasWidth, canvasHeight], () => {
                         :backdrop="canvasBackdrop"
                         :display-mode="selectedDisplayMode"
                     >
-                        <Transition name="lab-stage-fade" mode="out-in">
-                            <div :key="`${selectedName}:${selectedScene}`" :class="(selectedDisplayMode === 'tight' && canvasHeight <= 0) ? 'w-full' : 'h-full w-full'">
+                        <Transition
+                            name="lab-stage-fade"
+                            mode="out-in"
+                            @before-leave="handleStageBeforeLeave"
+                            @enter="handleStageEnter"
+                            @after-leave="handleStageAfterLeave"
+                        >
+                            <div :key="`${selectedName}:${selectedScene}`" class="h-full w-full">
                                 <component
                                     :is="fixtureComponent"
                                     v-if="fixtureComponent"
@@ -1506,7 +1555,9 @@ watch([sceneInput, canvasWidth, canvasHeight], () => {
                     <div
                         v-show="!bottomPanelCollapsed"
                         id="lab-fixture-controls-target"
+                        ref="controlsTargetRef"
                         class="min-h-0 max-h-48 overflow-auto px-4 py-2 text-xs"
+                        :style="controlsTargetMinHeight ? {minHeight: controlsTargetMinHeight} : undefined"
                     >
                         <!-- Fixture 的 LabFixtureControls 将 Teleport 到此处 -->
                     </div>
@@ -2356,16 +2407,11 @@ watch([sceneInput, canvasWidth, canvasHeight], () => {
 
 .lab-stage-fade-enter-active,
 .lab-stage-fade-leave-active {
-    transition: opacity 0.16s cubic-bezier(0.2, 0, 0, 1), transform 0.16s cubic-bezier(0.2, 0, 0, 1);
+    transition: opacity 0.16s cubic-bezier(0.2, 0, 0, 1);
 }
 
-.lab-stage-fade-enter-from {
-    opacity: 0;
-    transform: scale(0.99);
-}
-
+.lab-stage-fade-enter-from,
 .lab-stage-fade-leave-to {
     opacity: 0;
-    transform: scale(0.99);
 }
 </style>

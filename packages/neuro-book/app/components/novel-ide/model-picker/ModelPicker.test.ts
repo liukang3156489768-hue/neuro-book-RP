@@ -189,6 +189,11 @@ describe("ModelPickerContent", () => {
         });
 
         const roleButtons = wrapper.findAll("button");
+        const mainRoleButton = roleButtons.find((btn) => btn.text().includes("主力"));
+        expect(mainRoleButton).toBeDefined();
+        expect(mainRoleButton!.classes()).toContain("border-[color:var(--focus-outline)]");
+        expect(mainRoleButton!.classes()).toContain("shadow-[var(--focus-ring)]");
+
         const fastRoleButton = roleButtons.find((btn) => btn.text().includes("快速"));
         expect(fastRoleButton).toBeDefined();
 

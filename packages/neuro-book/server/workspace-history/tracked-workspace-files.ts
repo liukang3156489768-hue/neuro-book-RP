@@ -4,17 +4,20 @@ import {consola} from "consola";
 import type {OperationActor} from "@notnotype/nb-history";
 import {
     convertWorkspaceFileToDirectory,
+    copyWorkspacePath,
     createWorkspaceDirectory,
     createWorkspaceFile,
     deleteWorkspacePath,
     renameWorkspacePath,
     resolveWorkspacePath,
+    WorkspacePathCopyError,
     writeWorkspaceTextFile,
     type WorkspaceFileNode,
     type WorkspaceFileToDirectoryInput,
     type WorkspaceNewDirectoryInput,
     type WorkspaceNewFileInput,
 } from "nbook/server/workspace-files/workspace-files";
+import type {WorkspaceFileBatchItemResult, WorkspaceFileBatchResponse} from "nbook/shared/dto/workspace-file-operation.dto";
 import type {AbsoluteFsPath} from "nbook/server/runtime/paths/file-path";
 import type {WorkspaceFileTarget} from "nbook/server/workspace-files/workspace-file-target";
 import type {WorkspaceUploadedFileResult} from "nbook/server/workspace-files/workspace-upload";
@@ -227,6 +230,114 @@ export async function deleteWorkspacePathTracked(input: {
             before: pending.before,
         });
     }
+}
+
+/** 批量复制/移动：固定目标目录、逐项执行，不提供事务回滚假象。 */
+export async function batchWorkspacePathsTracked(input: {
+    target: WorkspaceFileTarget;
+    history?: ProjectHistoryHandle;
+    kind: "copy" | "move";
+    sources: string[];
+    destination: string;
+    actor: OperationActor;
+    assertBinding?: () => void;
+}): Promise<WorkspaceFileBatchResponse> {
+    const destination = normalizeSlashes(input.destination);
+    await assertWorkspaceStorageBoundary(input.target, destination, "mutation");
+    const normalized = input.sources.map((source) => normalizeSlashes(source));
+    const unique: string[] = [];
+    const results: WorkspaceFileBatchItemResult[] = [];
+    const seen = new Set<string>();
+    for (const source of normalized) {
+        const target = path.posix.join(destination, path.posix.basename(source));
+        if (seen.has(source)) {
+            results.push({source, target, status: "skipped", reason: "重复源路径"});
+            continue;
+        }
+        seen.add(source);
+        unique.push(source);
+    }
+    const outermost = unique.filter((source) => !unique.some((parent) => source !== parent && source.startsWith(`${parent}/`)));
+    for (const source of unique) {
+        if (outermost.includes(source)) continue;
+        results.push({source, target: path.posix.join(destination, path.posix.basename(source)), status: "skipped", reason: "父子重叠源路径，仅执行最外层源"});
+    }
+    const ordered = outermost.map((source) => ({source, target: path.posix.join(destination, path.posix.basename(source))}));
+    for (let orderedIndex = 0; orderedIndex < ordered.length; orderedIndex += 1) {
+        const item = ordered[orderedIndex];
+        try {
+            input.assertBinding?.();
+            await assertWorkspaceStorageBoundary(input.target, item.source, "mutation");
+            await assertWorkspaceStorageBoundary(input.target, item.target, "mutation");
+            if (item.source === item.target) {
+                results.push({source: item.source, target: item.target, status: "skipped", reason: "源与目标相同"});
+                continue;
+            }
+            if (await isDirectoryPath(input.target.root, item.source)
+                && (item.target === item.source || item.target.startsWith(`${item.source}/`))) {
+                results.push({source: item.source, target: item.target, status: "failed", reason: "目录不能移动或复制到自身后代"});
+                continue;
+            }
+            const mappings = await copyWorkspacePath(input.target.root, item.source, item.target);
+            await recordCopiedMappings(input.target, input.history, input.actor, mappings);
+            if (input.kind === "move") {
+                await deleteWorkspacePathTracked({
+                    target: input.target,
+                    history: input.history,
+                    filePath: item.source,
+                    recursive: true,
+                    actor: input.actor,
+                });
+            }
+            results.push({source: item.source, target: item.target, status: "success"});
+        } catch (error) {
+            if (isBindingFailure(error)) {
+                results.push({source: item.source, target: item.target, status: "failed", reason: errorMessage(error)});
+                for (const pending of ordered.slice(orderedIndex + 1)) {
+                    results.push({source: pending.source, target: pending.target, status: "not-executed", reason: "Project binding 已失效"});
+                }
+                break;
+            }
+            const mappings = error instanceof WorkspacePathCopyError ? error.mappings : [];
+            await recordCopiedMappings(input.target, input.history, input.actor, mappings);
+            results.push({source: item.source, target: item.target, status: "failed", reason: errorMessage(error)});
+        }
+    }
+    return {kind: input.kind, destination, items: results};
+}
+
+async function recordCopiedMappings(
+    target: WorkspaceFileTarget,
+    history: ProjectHistoryHandle | undefined,
+    actor: OperationActor,
+    mappings: readonly {fromPath: string; toPath: string}[],
+): Promise<void> {
+    if (target.kind !== "project-workspace") return;
+    const projectHistory = requireHistory(history);
+    for (const mapping of mappings) {
+        const bytes = await readBytesForRecord(target.root, mapping.toPath);
+        if (bytes !== null) {
+            await recordProjectWrite(projectHistory, {relativePath: mapping.toPath, actor, before: null, after: bytes});
+        }
+    }
+}
+
+async function isDirectoryPath(root: AbsoluteFsPath, relativePath: string): Promise<boolean> {
+    try {
+        return (await fs.lstat(resolveWorkspacePath(root, relativePath))).isDirectory();
+    } catch (error) {
+        if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return false;
+        throw error;
+    }
+}
+
+function isBindingFailure(error: unknown): boolean {
+    return typeof error === "object" && error !== null && "statusCode" in error
+        && (error.statusCode === 401 || error.statusCode === 403 || error.statusCode === 409);
+}
+
+function errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
 }
 
 /** 上传结果记账：对 action === "written" 的文件补 create 账（upload 对已存在文件恒 skip，before 必为 null）。 */

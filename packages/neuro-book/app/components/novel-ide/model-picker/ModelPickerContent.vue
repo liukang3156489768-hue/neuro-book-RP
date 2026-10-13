@@ -403,25 +403,20 @@ const filterTabOptions: SegmentedControlOption[] = [
 const slideDirection = ref<"left" | "right">("left");
 const mainScrollRef = ref<HTMLElement | null>(null);
 
-watch(activeFilter, (newVal, oldVal) => {
-    if (newVal === "models" && oldVal === "roles") {
-        slideDirection.value = "left";
-        void nextTick(() => {
-            searchInputRef.value?.focus();
-        });
-    } else if (newVal === "roles" && oldVal === "models") {
-        slideDirection.value = "right";
-    }
+function handleFilterChange(val: string | number | boolean | null): void {
+    const next = val === "models" ? "models" : "roles";
+    if (next === activeFilter.value) return;
+    slideDirection.value = next === "models" ? "left" : "right";
+    activeFilter.value = next;
     if (mainScrollRef.value) {
         mainScrollRef.value.scrollTop = 0;
     }
-});
-
-onMounted(() => {
-    void nextTick(() => {
-        searchInputRef.value?.focus();
-    });
-});
+    if (next === "models") {
+        void nextTick(() => {
+            searchInputRef.value?.focus({preventScroll: true});
+        });
+    }
+}
 </script>
 
 <template>
@@ -435,13 +430,13 @@ onMounted(() => {
                 : 'rounded-[inherit] bg-transparent',
         ]"
     >
-        <!-- 1. 顶部共享核心区：当前生效模型 + 思考等级（共享且高度恒定，彻底避免换页抖动） -->
+        <!-- 1. 顶部共享核心区：当前生效模型 + 思考等级（共享且整数像素高度恒定，彻底避免换页与落定亚像素抖动） -->
         <header class="flex shrink-0 flex-col gap-2.5 border-b border-[var(--divider,var(--border-color))] p-3">
             <!-- 1.1 顶部栏：标题与 Tab 切换 -->
             <div class="flex items-center justify-between gap-2">
                 <div class="flex min-w-0 items-center gap-2">
                     <span class="shrink-0 text-xs font-semibold tracking-wide text-[var(--text-main)]">会话模型设定</span>
-                    <span class="truncate rounded bg-[var(--bg-hover)] px-1.5 py-0.5 text-[10px] text-[var(--text-muted)]">
+                    <span class="truncate rounded bg-[var(--bg-hover)] px-1.5 py-0.5 text-[10px] leading-4 text-[var(--text-muted)]">
                         会话独立生效 · 默认设定不受影响
                     </span>
                 </div>
@@ -451,7 +446,7 @@ onMounted(() => {
                     :options="filterTabOptions"
                     size="xs"
                     class="w-[124px] shrink-0"
-                    @update:model-value="(val) => (activeFilter = val as 'roles' | 'models')"
+                    @update:model-value="handleFilterChange"
                 />
             </div>
 
@@ -466,14 +461,14 @@ onMounted(() => {
                             <span class="truncate text-xs font-semibold text-[var(--text-main)]">
                                 {{ activeSelectionDetails.title }}
                             </span>
-                            <span class="shrink-0 rounded bg-[var(--bg-hover)] px-1.5 py-0.2 font-mono text-[10px] text-[var(--text-secondary)]">
+                            <span class="shrink-0 rounded bg-[var(--bg-hover)] px-1.5 py-0 font-mono text-[10px] leading-4 text-[var(--text-secondary)]">
                                 {{ activeSelectionDetails.badge }}
                             </span>
-                            <span class="shrink-0 text-[10px] text-[var(--status-success)]">
+                            <span class="shrink-0 text-[10px] leading-4 text-[var(--status-success)]">
                                 ● 当前生效
                             </span>
                         </div>
-                        <div class="truncate text-[10px] text-[var(--text-muted)]">
+                        <div class="truncate text-[10px] leading-4 text-[var(--text-muted)]">
                             {{ activeSelectionDetails.detail }}
                         </div>
                     </div>
@@ -486,7 +481,7 @@ onMounted(() => {
                 <div class="flex shrink-0 items-center gap-1.5">
                     <span class="i-lucide-brain h-3.5 w-3.5 shrink-0 text-[var(--accent-text)]"></span>
                     <span class="shrink-0 text-xs font-medium text-[var(--text-main)]">思考等级</span>
-                    <span class="inline-flex w-[64px] shrink-0 justify-center font-mono text-[11px] font-semibold text-[var(--accent-text)]">
+                    <span class="inline-flex w-[64px] shrink-0 justify-center font-mono text-[11px] leading-4 font-semibold text-[var(--accent-text)]">
                         [{{ currentThinkingItem.label }}]
                     </span>
                 </div>
@@ -518,12 +513,12 @@ onMounted(() => {
                 <div v-if="activeFilter === 'roles'" key="tab-roles" class="tab-pane w-full space-y-2.5">
                     <!-- 角色梯度轴 (固定 4 档) -->
                     <section v-if="filteredGradientRoles.length > 0" class="space-y-1.5">
-                        <div class="flex items-center justify-between text-[11px] font-medium text-[var(--text-muted)]">
+                        <div class="flex items-center justify-between text-[11px] leading-4 font-medium text-[var(--text-muted)]">
                             <span class="flex items-center gap-1.5">
                                 <span class="i-lucide-layers h-3 w-3 text-[var(--accent-text)]"></span>
                                 模型角色梯度轴 (默认常驻)
                             </span>
-                            <span class="text-[10px] text-[var(--text-muted)]">随用途自动调度</span>
+                            <span class="text-[10px] leading-4 text-[var(--text-muted)]">随用途自动调度</span>
                         </div>
                         <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
                             <button
@@ -532,7 +527,7 @@ onMounted(() => {
                                 type="button"
                                 class="nb-ui-focus-ring group relative flex h-[78px] flex-col justify-between rounded-[var(--radius-control)] border p-2.5 text-left outline-none transition-[background-color,border-color,box-shadow] [transition-duration:var(--motion-fast)] [transition-timing-function:var(--ease-standard)] hover:bg-[var(--bg-hover)]"
                                 :class="isRoleActive(role)
-                                    ? 'border-[var(--accent-main)] bg-[var(--overlay-item-active,color-mix(in_srgb,var(--accent-main)_10%,transparent))] shadow-[0_0_0_1px_var(--accent-main)]'
+                                    ? 'border-[color:var(--focus-outline)] bg-[var(--overlay-item-active,color-mix(in_srgb,var(--accent-main)_10%,transparent))] shadow-[var(--focus-ring)]'
                                     : 'border-[color:var(--control-outline,var(--border-color))] bg-[var(--control-surface,var(--bg-panel))]'"
                                 @click="selectRole(role)"
                                 @mouseenter="hoveredKey = `role:${role.id}`"
@@ -557,17 +552,17 @@ onMounted(() => {
 
                     <!-- 2.2 角色专精轴 (<=4 个角色时直接 4 列等宽对齐无滚动条；>4 个时支持鼠标滚轮平滑缓动与直接拖拽) -->
                     <section v-if="filteredSpecialistRoles.length > 0" class="space-y-1.5">
-                        <div class="flex items-center justify-between text-[11px] font-medium text-[var(--text-muted)]">
+                        <div class="flex items-center justify-between text-[11px] leading-4 font-medium text-[var(--text-muted)]">
                             <span class="flex items-center gap-1.5">
                                 <span class="i-lucide-sparkles h-3 w-3 text-[var(--accent-text)]"></span>
                                 专精角色 (用户已开启展示)
                             </span>
-                            <span v-if="isSpecialistScrollable" class="text-[10px] text-[var(--text-muted)]">横向滑动浏览</span>
+                            <span v-if="isSpecialistScrollable" class="text-[10px] leading-4 text-[var(--text-muted)]">横向滑动浏览</span>
                         </div>
                         <div
                             :class="[
                                 isSpecialistScrollable
-                                    ? 'flex gap-2 overflow-x-auto overscroll-x-contain pb-1.5 pt-0.5 [scrollbar-width:thin] [scrollbar-color:color-mix(in_srgb,var(--text-main)_20%,transparent)_transparent] cursor-grab active:cursor-grabbing select-none'
+                                    ? 'flex gap-2 overflow-x-auto overscroll-x-contain -mx-1.5 px-1.5 -mt-1 pt-1.5 pb-1.5 [scrollbar-width:thin] [scrollbar-color:color-mix(in_srgb,var(--text-main)_20%,transparent)_transparent] cursor-grab active:cursor-grabbing select-none'
                                     : 'grid grid-cols-2 gap-2 sm:grid-cols-4',
                             ]"
                             @wheel="handleSpecialistWheel"
@@ -584,7 +579,7 @@ onMounted(() => {
                                 :class="[
                                     isSpecialistScrollable ? 'w-[142px] shrink-0' : 'w-full',
                                     isRoleActive(role)
-                                        ? 'border-[var(--accent-main)] bg-[var(--overlay-item-active,color-mix(in_srgb,var(--accent-main)_10%,transparent))] shadow-[0_0_0_1px_var(--accent-main)]'
+                                        ? 'border-[color:var(--focus-outline)] bg-[var(--overlay-item-active,color-mix(in_srgb,var(--accent-main)_10%,transparent))] shadow-[var(--focus-ring)]'
                                         : 'border-[color:var(--control-outline,var(--border-color))] bg-[var(--control-surface,var(--bg-panel))]',
                                 ]"
                                 @click="handleSpecialistCardClick($event, role)"
@@ -611,8 +606,8 @@ onMounted(() => {
 
                 <!-- 2.3 所有物理模型库 (按 Provider 分组) -->
                 <div v-else key="tab-models" class="tab-pane w-full space-y-2">
-                    <!-- 搜索框：置于模型库顶部，输入即时过滤，具备 sticky 吸顶与自适应背景 -->
-                    <div class="sticky top-0 z-10 -mx-3 -mt-3 mb-2 bg-[var(--bg-panel)] px-3 pt-3 pb-1 border-b border-[var(--divider,var(--border-color))]">
+                    <!-- 搜索框：置于模型库顶部，不依赖负外边距 (-mt-3)，利用顶向阴影遮罩覆盖 p-3 顶部留白，消除吸顶重算与外边距折叠跳动 -->
+                    <div class="sticky top-0 z-10 -mx-3 mb-2 bg-[var(--bg-panel)] px-3 pb-2 border-b border-[var(--divider,var(--border-color))] shadow-[0_-12px_0_0_var(--bg-panel)]">
                         <div class="relative flex items-center">
                             <span class="i-lucide-search pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-[var(--text-muted)]"></span>
                             <input
@@ -634,12 +629,12 @@ onMounted(() => {
                         </div>
                     </div>
                     <section class="space-y-2">
-                        <div class="flex items-center justify-between text-[11px] font-medium text-[var(--text-muted)]">
+                        <div class="flex items-center justify-between text-[11px] leading-4 font-medium text-[var(--text-muted)]">
                             <span class="flex items-center gap-1.5">
                                 <span class="i-lucide-cpu h-3 w-3 text-[var(--accent-text)]"></span>
                                 所有模型库 ({{ filteredModels.length }})
                             </span>
-                            <span class="text-[10px] text-[var(--text-muted)]">按 Provider 分类</span>
+                            <span class="text-[10px] leading-4 text-[var(--text-muted)]">按 Provider 分类</span>
                         </div>
 
                         <div v-if="providerGroups.length === 0" class="py-8 text-center text-xs text-[var(--text-muted)]">
@@ -656,7 +651,7 @@ onMounted(() => {
                                 <div class="flex items-center gap-2">
                                     <span class="i-lucide-server h-3.5 w-3.5 text-[var(--accent-text)]"></span>
                                     <span>{{ group.providerName }}</span>
-                                    <span class="rounded bg-[var(--bg-panel)] px-1.5 py-0.2 text-[10px] font-normal text-[var(--text-muted)]">
+                                    <span class="rounded bg-[var(--bg-panel)] px-1.5 py-0 text-[10px] leading-4 font-normal text-[var(--text-muted)]">
                                         {{ group.models.length }}
                                     </span>
                                 </div>
@@ -751,9 +746,11 @@ onMounted(() => {
  * 3. 采用 Apple 标准弹簧阻尼减速曲线 cubic-bezier(0.16, 1, 0.3, 1)，时长 180ms，极致轻盈丝滑。
  */
 .tab-pane {
+    will-change: transform, opacity;
+    transform: translate3d(0, 0, 0);
+    backface-visibility: hidden;
     transition: opacity 180ms cubic-bezier(0.16, 1, 0.3, 1),
                 transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
-    will-change: transform, opacity;
 }
 
 /* 向左滑动（切到模型库） */

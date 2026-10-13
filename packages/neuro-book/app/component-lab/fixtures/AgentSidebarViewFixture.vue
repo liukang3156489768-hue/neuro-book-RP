@@ -8,6 +8,7 @@ import LabFixtureControls from "../LabFixtureControls.vue";
 import type {AgentMessage} from "nbook/app/components/novel-ide/agent/agent-message";
 import type {AgentMode} from "nbook/shared/dto/agent-session.dto";
 import {agentSidebarViewScenes} from "./AgentSidebarView.scenes";
+import {sampleWorkspaceDiffByPath} from "./AgentExtraPanels.scenes";
 
 const props = defineProps<LabFixtureProps>();
 
@@ -81,7 +82,10 @@ const viewProps = computed<AgentSidebarViewProps>(() => {
         ...data,
         flow: {...data.flow, messages: messages.value},
         composer: {...composer, resolveMenu: () => ({title: "命令", prefix: "/", sections: []})},
-        workspaceChanges: {...workspaceChanges, diffStateFor: () => ({status: "idle", loading: false, error: null, result: null})},
+        workspaceChanges: {
+            ...workspaceChanges,
+            diffStateFor: (group) => sampleWorkspaceDiffByPath[group.path] ?? {status: "idle", loading: false, error: null, result: null},
+        },
     };
 });
 

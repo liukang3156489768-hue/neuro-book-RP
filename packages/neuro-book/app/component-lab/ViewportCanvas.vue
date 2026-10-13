@@ -315,6 +315,7 @@ function handleKeydown(axis: ResizeAxis, event: KeyboardEvent): void {
     color: var(--text-muted);
     font-family: var(--font-mono);
     font-size: var(--text-xs);
+    line-height: 16px;
 }
 
 /* 盒子是内容盒：默认厚玻璃的面板色，被测组件才有一个确定的底。

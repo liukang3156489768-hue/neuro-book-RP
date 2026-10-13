@@ -232,6 +232,10 @@ onUnmounted(() => {
 
 <style scoped>
 .model-picker-popover-panel {
+    /* 保持常驻单位变换矩阵，防止入场 scale 动画结束卸载合成层瞬间产生亚像素 Y 轴取整跳动 */
+    will-change: transform, opacity;
+    transform: scale(1) translateZ(0);
+    backface-visibility: hidden;
     /* 采用多层微扩散空气柔影 + 1px 精准发丝轮廓，彻底消除原本 80px 浓黑阴影带来的脏感与压迫感 */
     box-shadow:
         0 0 0 1px color-mix(in srgb, var(--panel-outline, var(--border-color)) 75%, transparent),
@@ -262,7 +266,7 @@ onUnmounted(() => {
 .model-picker-popover-panel.nb-popover-enter-from,
 .model-picker-popover-panel.nb-popover-leave-to {
     opacity: 0 !important;
-    transform: scale(0.97) !important;
+    transform: scale(0.97) translateZ(0) !important;
 }
 
 @media (prefers-reduced-motion: reduce) {

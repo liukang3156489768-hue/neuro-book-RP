@@ -106,6 +106,9 @@ describe("Lab 目录检索", () => {
         expect(deriveDisplayMode("WorkbenchStatusBar")).toBe("fill");
         expect(deriveDisplayMode("WorkbenchStatusBarItem")).toBe("tight");
         expect(deriveDisplayMode("DesktopTitleBarChrome")).toBe("fill");
+        expect(deriveDisplayMode("AgentSessionDialog", "dialog")).toBe("fill");
+        expect(deriveDisplayMode("AgentSessionTreeDialog", "dialog")).toBe("fill");
+        expect(deriveDisplayMode("AgentModeSessionSidebar")).toBe("tight");
 
         for (const item of labComponents) {
             expect(["tight", "fill"]).toContain(item.displayMode);

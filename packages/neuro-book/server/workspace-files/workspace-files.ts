@@ -518,6 +518,109 @@ export async function deleteWorkspacePath(rootInput: AbsoluteFsPath, filePath: s
     }
     await fs.unlink(absolutePath);
 }
+export class WorkspacePathCopyError extends Error {
+    readonly mappings: readonly {fromPath: string; toPath: string}[];
+
+    constructor(message: string, mappings: readonly {fromPath: string; toPath: string}[], cause?: unknown) {
+        super(message, {cause});
+        this.name = "WorkspacePathCopyError";
+        this.mappings = mappings;
+    }
+}
+
+/**
+ * 使用磁盘字节递归复制文件或目录；目标已存在时拒绝覆盖，不跟随链接。
+ * 返回实际复制的文件映射，供 History 记账使用；目录本身不作为账面对象。
+ */
+export async function copyWorkspacePath(
+    rootInput: AbsoluteFsPath,
+    fromPath: string,
+    toPath: string,
+): Promise<Array<{fromPath: string; toPath: string}>> {
+    const root = await resolveWorkspaceOperationRoot(rootInput, false);
+    const source = await resolveWorkspaceEntryPath(root, fromPath);
+    const destination = await resolveWorkspaceEntryPath(root, toPath);
+    const sourceStat = await fs.lstat(source).catch((error: unknown) => {
+        if (isMissingWorkspacePathError(error)) return null;
+        throw error;
+    });
+    if (!sourceStat) {
+        throw new Error(`源路径不存在: ${fromPath}`);
+    }
+    if (sourceStat.isSymbolicLink()) {
+        throw new Error(`不支持复制符号链接: ${fromPath}`);
+    }
+    if (await pathExists(destination)) {
+        throw new Error(`目标路径已存在: ${toPath}`);
+    }
+    const mappings: Array<{fromPath: string; toPath: string}> = [];
+    try {
+        if (sourceStat.isDirectory()) {
+            await fs.mkdir(destination, {recursive: false});
+            await copyDirectoryEntries(root, source, destination, fromPath, toPath, mappings);
+        } else if (sourceStat.isFile()) {
+            await fs.mkdir(path.dirname(destination), {recursive: true});
+            const bytes = await fs.readFile(source);
+            const handle = await fs.open(destination, "wx");
+            try {
+                await handle.writeFile(bytes);
+            } finally {
+                await handle.close();
+            }
+            mappings.push({fromPath: trimWorkspacePath(fromPath), toPath: trimWorkspacePath(toPath)});
+        } else {
+            throw new Error(`不支持复制的文件类型: ${fromPath}`);
+        }
+    } catch (error) {
+        throw new WorkspacePathCopyError(error instanceof Error ? error.message : String(error), mappings, error);
+    }
+    return mappings;
+}
+
+async function copyDirectoryEntries(
+    root: AbsoluteFsPath,
+    source: AbsoluteFsPath,
+    destination: AbsoluteFsPath,
+    sourceRelative: string,
+    destinationRelative: string,
+    mappings: Array<{fromPath: string; toPath: string}>,
+): Promise<void> {
+    const entries = await fs.readdir(source, {withFileTypes: true});
+    for (const entry of entries) {
+        const sourceChild = absoluteFsPath(path.join(source, entry.name));
+        const destinationChild = absoluteFsPath(path.join(destination, entry.name));
+        await assertRealParentContained(root, destinationChild);
+        const sourceChildRelative = path.posix.join(trimWorkspacePath(sourceRelative), entry.name);
+        const destinationChildRelative = path.posix.join(trimWorkspacePath(destinationRelative), entry.name);
+        if (entry.isSymbolicLink()) {
+            throw new Error(`不支持复制符号链接: ${sourceChildRelative}`);
+        }
+        if (entry.isDirectory()) {
+            await fs.mkdir(destinationChild, {recursive: false});
+            await copyDirectoryEntries(root, sourceChild, destinationChild, sourceChildRelative, destinationChildRelative, mappings);
+        } else if (entry.isFile()) {
+            const bytes = await fs.readFile(sourceChild);
+            const handle = await fs.open(destinationChild, "wx");
+            try {
+                await handle.writeFile(bytes);
+            } finally {
+                await handle.close();
+            }
+            mappings.push({fromPath: sourceChildRelative, toPath: destinationChildRelative});
+        } else {
+            throw new Error(`不支持复制的文件类型: ${sourceChildRelative}`);
+        }
+    }
+}
+
+function trimWorkspacePath(value: string): string {
+    const normalized = value.replaceAll("\\", "/").replace(/^\/+|\/+$/g, "");
+    return normalized || ".";
+}
+
+function isMissingWorkspacePathError(error: unknown): boolean {
+    return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
 
 /**
  * 读取单个文件或目录的元信息。

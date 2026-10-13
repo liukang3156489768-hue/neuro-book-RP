@@ -95,6 +95,8 @@ defineExpose({
             :loading="props.attachments.loading"
             :search="props.attachments.search"
             :insert-disabled="props.attachments.insertDisabled"
+            :resolve-attachment-url="props.resolveAttachmentUrl"
+            :teleport-target="props.teleportTarget"
             @update:search="emit('attachment-search', $event)"
             @load-more="emit('attachment-load-more')"
             @insert="emit('attachment-insert', $event)"
@@ -314,6 +316,7 @@ defineExpose({
             :can-activate="props.sessionTree.canActivate"
             @update:model-value="emit('update:sessionTreeDialogOpen', $event)"
             @select="emit('tree-select', $event)"
+            @copy-id="emit('tree-copy-id', $event)"
         />
 
         <AgentContextInspectorDialog

@@ -96,9 +96,14 @@ import {editorWorkbenchScenes, monacoCodeEditorScenes, novelIdeActivityBarScenes
 
 import type AgentSystemPromptPanel from "../../components/novel-ide/agent/panels/system-prompt/AgentSystemPromptPanel.vue";
 import type AgentLinkedAgentPanel from "../../components/novel-ide/agent/panels/linked-agents/AgentLinkedAgentPanel.vue";
+import type AgentWorkspaceChanges from "../../components/novel-ide/agent/panels/workspace-changes/AgentWorkspaceChanges.vue";
+import type AgentSessionDialog from "../../components/novel-ide/agent/dialogs/session-list/AgentSessionDialog.vue";
+import type AgentSessionTreeDialog from "../../components/novel-ide/agent/dialogs/session-tree/AgentSessionTreeDialog.vue";
+import type AgentSessionAttachmentPanel from "../../components/novel-ide/agent/panels/attachments/AgentSessionAttachmentPanel.vue";
+import type AgentModeSessionSidebar from "../../components/novel-ide/agent/AgentModeSessionSidebar.vue";
 import type WorkbenchCommandPalette from "../../components/workbench/WorkbenchCommandPalette.vue";
 import type WorkbenchViewInstances from "../../components/workbench/WorkbenchViewInstances.vue";
-import {agentSystemPromptPanelScenes, agentLinkedAgentPanelScenes, workbenchCommandPaletteScenes, workbenchViewInstancesScenes} from "./AgentExtraPanels.scenes";
+import {agentSystemPromptPanelScenes, agentLinkedAgentPanelScenes, agentWorkspaceChangesScenes, agentSessionDialogScenes, agentSessionTreeDialogScenes, agentSessionAttachmentPanelScenes, agentModeSessionSidebarScenes, workbenchCommandPaletteScenes, workbenchViewInstancesScenes} from "./AgentExtraPanels.scenes";
 
 import type AgentChatFlow from "../../components/novel-ide/agent/flow/AgentChatFlow.vue";
 import type AgentChatEmptyState from "../../components/novel-ide/agent/flow/AgentChatEmptyState.vue";
@@ -505,6 +510,11 @@ export const labFixtures: LabFixture[] = [
     defineLabFixture<typeof AgentSessionHeader>({component: "AgentSessionHeader", scenes: agentSessionHeaderScenes, load: async () => (await import("./AgentSessionHeaderFixture.vue")).default}),
     defineLabFixture<typeof AgentSystemPromptPanel>({component: "AgentSystemPromptPanel", scenes: agentSystemPromptPanelScenes, load: async () => (await import("./AgentSystemPromptPanelFixture.vue")).default}),
     defineLabFixture<typeof AgentLinkedAgentPanel>({component: "AgentLinkedAgentPanel", scenes: agentLinkedAgentPanelScenes, load: async () => (await import("./AgentLinkedAgentPanelFixture.vue")).default}),
+    defineLabFixture<typeof AgentWorkspaceChanges>({component: "AgentWorkspaceChanges", scenes: agentWorkspaceChangesScenes, load: async () => (await import("./AgentWorkspaceChangesFixture.vue")).default}),
+    defineLabFixture<typeof AgentSessionDialog>({component: "AgentSessionDialog", scenes: agentSessionDialogScenes, load: async () => (await import("./AgentSessionDialogFixture.vue")).default}),
+    defineLabFixture<typeof AgentSessionTreeDialog>({component: "AgentSessionTreeDialog", scenes: agentSessionTreeDialogScenes, load: async () => (await import("./AgentSessionTreeDialogFixture.vue")).default}),
+    defineLabFixture<typeof AgentSessionAttachmentPanel>({component: "AgentSessionAttachmentPanel", scenes: agentSessionAttachmentPanelScenes, load: async () => (await import("./AgentSessionAttachmentPanelFixture.vue")).default}),
+    defineLabFixture<typeof AgentModeSessionSidebar>({component: "AgentModeSessionSidebar", scenes: agentModeSessionSidebarScenes, load: async () => (await import("./AgentModeSessionSidebarFixture.vue")).default}),
     defineLabFixture<typeof AgentSidebarView>({
         component: "AgentSidebarView", scenes: agentSidebarViewScenes,
         load: async () => (await import("./AgentSidebarViewFixture.vue")).default,

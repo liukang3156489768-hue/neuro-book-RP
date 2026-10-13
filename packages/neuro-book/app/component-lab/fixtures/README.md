@@ -12,7 +12,8 @@ Lab 的舞台容器（`ViewportCanvas`）直接充当被测组件的外部视口
 - **根组件即主体**：Fixture 的责任是将组件纯粹挂载到 Lab 舞台上。
 - **充满视口盒子**：
   - 面板类、视图类与工作台类组件，直接声明 `class="h-full w-full"`，贴满 ViewportCanvas 的舞台内容区；
-  - 卡片类、部件类组件，声明 `class="w-full"`，自适应贴合视口盒子宽度。
+  - 卡片类、部件类组件，声明 `class="w-full"`，自适应贴合视口盒子宽度；
+  - 自带受控像素宽高或边缘拖拽条的面板/侧栏组件，在未传入受控尺寸时应回退为 `w-full` / `h-full` 自适应撑满外层容器且不挂载内部边缘拖拽条，确保在 Lab 中直接由外层 `ViewportCanvas` 手柄与预设控制尺寸。
 - **彻底废除反模式（严格禁止）**：
   - ❌ **严禁嵌套假外壳**：严禁在 Fixture 内写 `h-[700px] max-w-[480px] rounded-xl border bg-panel shadow-lg`；
   - ❌ **严禁外层多余内边距**：严禁在根容器写 `flex items-center justify-center p-6`；
